@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>luci-app-thermal — Status ▸ Overview</title>
+<style>
+/* ---------------------------------------------------------------------
+   Design tokens and component rules transcribed from luci-theme-bootstrap
+   (cascade.css). Nothing here is invented: the preview must look like the
+   router's own pages, so the block can be judged in situ.
+   --------------------------------------------------------------------- */
+:root {
+	--background-color-high: #fff;
+	--background-color-medium: #f7f7f7;
+	--background-color-low: #eee;
+	--border-color-high: #ccc;
+	--border-color-medium: #ddd;
+	--border-color-low: #eee;
+	--text-color-high: #404040;
+	--text-color-medium: #666;
+	--text-color-low: #999;
+	--primary-color-medium: #08c;
+	--error-color-medium: #e8210d;
+	--warn-color-low: #f2d24f;
+	--font-mono: Monaco, Consolas, "Lucida Console", monospace;
+}
+[data-darkmode="true"] {
+	--background-color-high: #2b2b2b;
+	--background-color-medium: #333;
+	--background-color-low: #3a3a3a;
+	--border-color-high: #555;
+	--border-color-medium: #4a4a4a;
+	--border-color-low: #444;
+	--text-color-high: #d0d0d0;
+	--text-color-medium: #9a9a9a;
+	--text-color-low: #777;
+	--primary-color-medium: #4a9fd8;
+	--error-color-medium: #e8210d;
+	--warn-color-low: #d4b436;
+}
+body {
+	font-family: Helvetica, Arial, sans-serif;
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--text-color-high);
+	background: var(--background-color-low);
+	margin: 0;
+	padding: 24px 16px 64px;
+}
+.wrap { max-width: 900px; margin: 0 auto; }
+.cbi-section {
+	background: var(--background-color-high);
+	border: 1px solid var(--border-color-medium);
+	border-radius: 3px;
+	padding: 12px 16px 16px;
+	margin-bottom: 16px;
+}
+.cbi-title h3 {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	font-size: 15px;
+	font-weight: bold;
+	margin: 0 0 10px;
+	padding-bottom: 8px;
+	border-bottom: 1px solid var(--border-color-low);
+}
+.label {
+	font-size: 11px;
+	font-weight: normal;
+	padding: 2px 8px;
+	border-radius: 3px;
+	background: var(--background-color-low);
+	border: 1px solid var(--border-color-high);
+	color: var(--text-color-medium);
+	cursor: pointer;
+	min-width: 4em;
+	text-align: center;
+}
+table.table { width: 100%; border-collapse: collapse; }
+tr.tr { border-bottom: 1px solid var(--border-color-low); }
+tr.tr:last-child { border-bottom: 0; }
+td.td { padding: 6px 8px 6px 0; vertical-align: middle; text-align: left; }
+td.td.top { vertical-align: top; }
+/* Verbatim from cascade.css: an 8px track with the caption sitting above
+   it, not overlaid on the fill. */
+.cbi-progressbar {
+	position: relative;
+	border: 1px solid var(--border-color-high);
+	background: var(--background-color-medium);
+	border-radius: 3px;
+	min-width: 170px;
+	height: 8px;
+	margin: 1.4em 0 4px 0;
+}
+.cbi-progressbar > div {
+	height: 100%;
+	width: 0%;
+	background: var(--primary-color-medium);
+	border-radius: 2px;
+	transition: width .25s ease-in;
+}
+.cbi-progressbar::before {
+	position: absolute;
+	top: -1.4em;
+	left: 0;
+	content: attr(title);
+	white-space: pre;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	color: var(--text-color-high);
+}
+.thermal-src { font-family: var(--font-mono); font-size: 11px; color: var(--text-color-medium); }
+.thermal-bar[data-state="warn"] > div { background: var(--warn-color-low); }
+.thermal-bar[data-state="crit"] > div { background: var(--error-color-medium); }
+.thermal-trip { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--text-color-medium); }
+.thermal-note { font-size: 11px; color: var(--text-color-medium); margin: 4px 0 0; }
+.pv-bar {
+	max-width: 900px; margin: 0 auto 16px; display: flex; gap: 8px;
+	align-items: center; font-size: 12px; color: var(--text-color-medium);
+}
+.pv-bar button {
+	font: inherit; padding: 4px 10px; cursor: pointer;
+	border: 1px solid var(--border-color-high); border-radius: 3px;
+	background: var(--background-color-high); color: var(--text-color-high);
+}
+</style>
+</head>
+<body>
+<div class="pv-bar">
+	<button id="pv-theme">Toggle dark mode</button>
+	<button id="pv-heat">Simulate disk at 68 °C</button>
+	<button id="pv-lang">中文</button>
+	<span id="pv-status"></span>
+</div>
+<div class="wrap" id="pv-root"></div>
+
+<script>
+/* =====================================================================
+   Minimal LuCI runtime shim.
+
+   The point of this harness is that the real module file is fetched and
+   executed unmodified, so what renders below is the shipped code path and
+   not a hand-copied approximation.
+   ===================================================================== */
+function E(tag, attrs, children) {
+	if (Array.isArray(tag)) {
+		const frag = document.createDocumentFragment();
+		(attrs || []).forEach(c => append(frag, c));
+		return frag;
+	}
+	const el = document.createElement(tag);
+	if (attrs && typeof attrs === 'object' && !Array.isArray(attrs) && !(attrs instanceof Node)) {
+		for (const k in attrs) {
+			if (attrs[k] == null) continue;
+			if (typeof attrs[k] === 'function') el.addEventListener(k, attrs[k]);
+			else el.setAttribute(k, attrs[k]);
+		}
+	} else if (attrs != null) {
+		children = attrs;
+	}
+	append(el, children);
+	return el;
+}
+function append(parent, c) {
+	if (c == null) return;
+	if (Array.isArray(c)) return c.forEach(x => append(parent, x));
+	parent.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+}
+function _(s) { return (CATALOG && CATALOG[s]) || s; }
+
+/* Populated from po/zh_Hans/thermal.po when the language toggle is on, so
+   the preview exercises the real catalogue rather than a hand-typed copy. */
+let CATALOG = null;
+
+/* String.format, as provided by luci-base. */
+String.prototype.format = function () {
+	const args = arguments; let i = 0;
+	return this.replace(/%(?:\.(\d+))?([sdf%])/g, (m, prec, conv) => {
+		if (conv === '%') return '%';
+		const v = args[i++];
+		if (conv === 'd') return String(Math.round(Number(v)));
+		if (conv === 'f') return Number(v).toFixed(prec != null ? +prec : 6);
+		return String(v);
+	});
+};
+
+const L = {
+	resolveDefault: (p, d) => Promise.resolve(p).catch(() => d).then(v => v == null ? d : v),
+	isObject: v => v != null && typeof v === 'object' && !Array.isArray(v),
+	bind: (fn, self, ...a) => fn.bind(self, ...a),
+};
+const baseclass = { extend: proto => proto };
+</script>
+
+<script>
+/* =====================================================================
+   Fixture: verbatim getSensors() output captured from the target device
+   (Intel Celeron J4125, OpenWrt 25.12.5, kernel 6.12.94) by running the
+   real ucode backend against its live sysfs.
+   ===================================================================== */
+const FIXTURE = { chips: [
+	{ id: 'hwmon0', name: 'acpitz', kind: 'board', detail: 'acpitz', sensors: [
+		{ id: 'hwmon0/temp1', label: 'temp1', path: '/sys/class/hwmon/hwmon0/temp1_input',
+		  temp: 42000, hot: 65000, crit: 95000, assumed: false } ] },
+	{ id: 'hwmon1', name: 'coretemp', kind: 'cpu', detail: 'coretemp', sensors: [
+		{ id: 'hwmon1/temp1', label: 'Package id 0', path: '/sys/class/hwmon/hwmon1/temp1_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp2', label: 'Core 0', path: '/sys/class/hwmon/hwmon1/temp2_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp3', label: 'Core 1', path: '/sys/class/hwmon/hwmon1/temp3_input',
+		  temp: 43000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp4', label: 'Core 2', path: '/sys/class/hwmon/hwmon1/temp4_input',
+		  temp: 43000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp5', label: 'Core 3', path: '/sys/class/hwmon/hwmon1/temp5_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false } ] },
+	{ id: 'hwmon2', name: 'drivetemp', kind: 'disk', detail: 'drivetemp · sda', sensors: [
+		{ id: 'hwmon2/temp1', label: 'Netac SSD 120GB', path: '/sys/class/hwmon/hwmon2/temp1_input',
+		  temp: 54000, hot: 60000, crit: 70000, assumed: true } ] },
+	{ id: 'thermal_zone1', name: 'x86_pkg_temp', kind: 'cpu', detail: 'x86_pkg_temp · thermal_zone1',
+	  sensors: [
+		{ id: 'thermal_zone1', label: 'x86_pkg_temp', path: '/sys/class/thermal/thermal_zone1/temp',
+		  temp: 42000, hot: 95000, crit: 105000, assumed: true } ] },
+] };
+
+let HEAT = false;
+function fixtureTemps() {
+	const out = {};
+	for (const c of FIXTURE.chips)
+		for (const s of c.sensors)
+			out[s.path] = (HEAT && c.kind === 'disk') ? 68000 : s.temp;
+	return out;
+}
+
+/* Stand in for rpc.declare, routing to the captured fixture. */
+const rpc = { declare(opts) {
+	return function (paths) {
+		if (opts.method === 'getSensors') return Promise.resolve(FIXTURE.chips);
+		return Promise.resolve(fixtureTemps());
+	};
+} };
+
+/* Resolve the shimmed 'require' names the module asks for. */
+const MODULES = { baseclass, rpc };
+</script>
+
+<script>
+(async function () {
+	const status = document.getElementById('pv-status');
+	const src = await fetch('../htdocs/luci-static/resources/view/status/include/29_thermal.js')
+		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
+
+	/* Translate LuCI's 'require x' pragmas into shim bindings, then run the
+	   module body untouched so the preview exercises the real code. */
+	const requires = [...src.matchAll(/^'require ([\w.]+)';$/gm)].map(m => m[1]);
+	const body = src.replace(/^'(use strict|require [\w.]+)';$/gm, '');
+	const names = requires.map(r => r.split('.').pop());
+
+	const root = document.getElementById('pv-root');
+	let container = null;
+
+	/* `title:` is evaluated once when the module object is built, exactly as
+	   in LuCI, so switching catalogue means rebuilding the module — which is
+	   also what a real page load in another language does. */
+	function instantiate() {
+		const mod = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
+			...names.map(n => MODULES[n]), E, _, L);
+
+		/* Reproduce the chrome view/status/index.js puts around an include:
+		   .cbi-section > .cbi-title > h3 + Show/Hide toggle, then container. */
+		container = E('div');
+		root.replaceChildren(E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-title' }, [
+				E('h3', {}, [ mod.title, E('span', { 'class': 'label' }, [ 'Hide' ]) ]),
+			]),
+			container,
+		]));
+		return mod;
+	}
+
+	let mod = instantiate();
+
+	async function tick() {
+		const data = await mod.load();
+		container.replaceChildren(mod.render(data));
+	}
+	await tick();
+
+	document.getElementById('pv-heat').addEventListener('click', async (e) => {
+		HEAT = !HEAT;
+		e.currentTarget.textContent = HEAT ? 'Restore disk to 54 °C' : 'Simulate disk at 68 °C';
+		await tick();
+	});
+	document.getElementById('pv-theme').addEventListener('click', () => {
+		const on = document.documentElement.getAttribute('data-darkmode') === 'true';
+		document.documentElement.setAttribute('data-darkmode', on ? 'false' : 'true');
+	});
+
+	const langBtn = document.getElementById('pv-lang');
+	let langOn = false, zh = null;          /* zh is cached; CATALOG is the active one */
+
+	async function setLang(on) {
+		langOn = on;
+		if (langOn && !zh)
+			zh = await fetch('zh_Hans.json').then(r => r.json());
+		CATALOG = langOn ? zh : null;
+		langBtn.textContent = langOn ? 'EN' : '中文';
+		mod = instantiate();          /* re-evaluate title: under the new catalogue */
+		await tick();
+	}
+
+	langBtn.addEventListener('click', () => setLang(!langOn));
+
+	status.textContent = 'real module · ' + requires.join(', ') + ' shimmed · device fixture';
+
+	/* ?shot=1 renders a clean frame for screenshot capture: toolbar hidden,
+	   optionally ?lang=zh. Sets data-shot on <html> when settled so a headless
+	   capture can poll for readiness instead of guessing at a delay. */
+	const qs = new URLSearchParams(location.search);
+	if (qs.get('shot') === '1') {
+		document.querySelector('.pv-bar').style.display = 'none';
+		document.body.style.padding = '18px';
+		if (qs.get('lang') === 'zh')
+			await setLang(true);
+		document.documentElement.setAttribute('data-shot', 'ready');
+	}
+})().catch(e => {
+	document.getElementById('pv-status').textContent = 'FAILED: ' + e.message;
+	console.error(e);
+});
+</script>
+</body>
+</html>

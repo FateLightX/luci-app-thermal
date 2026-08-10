@@ -1,0 +1,93 @@
+name: release-packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+    steps:
+      - name: checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: verify translation catalogues
+        run: ./tests/check-i18n.sh
+
+      - id: version
+        name: resolve release version
+        run: |
+          set -eu
+          version=$(sed -n 's/^PKG_VERSION:=//p' luci-app-thermal/Makefile | head -n1)
+          release=$(sed -n 's/^PKG_RELEASE:=//p' luci-app-thermal/Makefile | head -n1)
+          [ -n "$version" ] && [ -n "$release" ] || {
+            echo "::error::PKG_VERSION or PKG_RELEASE missing from Makefile"; exit 1; }
+          release_version="v${version}-${release}"
+          printf '%s\n' "$release_version" | grep -Eq '^v[0-9]+[.][0-9]+[.][0-9]+-[0-9]+$' || {
+            echo "::error::malformed version: $release_version"; exit 1; }
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: validate
+    name: x86_64-openwrt-25.12 release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # luci.mk derives PKG_PO_VERSION from git log; a shallow clone makes
+          # that fall back to file mtimes and produces unstable versions.
+          fetch-depth: 0
+
+      - name: build
+        uses: openwrt/gh-action-sdk@797d0e3d0eb13b355c3447f60d0179d4b43089e2 # main
+        env:
+          ARCH: x86_64-openwrt-25.12
+          FEEDNAME: thermal
+          PACKAGES: luci-app-thermal
+          # INDEX/signing only take effect when the secrets exist; without them
+          # the run still produces unsigned .apk files that install with
+          # --allow-untrusted.
+          INDEX: 1
+          KEY_BUILD: ${{ secrets.KEY_BUILD }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          NO_REFRESH_CHECK: true
+
+      - name: verify artifacts
+        run: |
+          set -eu
+          out="bin/packages/x86_64/thermal"
+          ls -la "$out"
+          test -n "$(find "$out" -name 'luci-app-thermal-*.apk' -print -quit)" \
+            || { echo "::error::main package missing"; exit 1; }
+          test -n "$(find "$out" -name 'luci-i18n-thermal-zh-cn-*.apk' -print -quit)" \
+            || { echo "::error::zh-cn translation package missing"; exit 1; }
+
+      - name: compress
+        run: |
+          set -eu
+          tar -c -z -f luci-app-thermal_x86_64-openwrt-25.12.tar.gz \
+            -C bin/packages/x86_64/thermal .
+
+      - name: release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
+        with:
+          tag_name: ${{ needs.validate.outputs.release_version }}
+          name: ${{ needs.validate.outputs.release_version }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            luci-app-thermal_x86_64-openwrt-25.12.tar.gz
+
+      - name: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: luci-app-thermal_x86_64-openwrt-25.12
+          path: bin/packages/x86_64/thermal

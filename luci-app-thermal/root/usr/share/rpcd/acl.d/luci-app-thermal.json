@@ -1,0 +1,10 @@
+{
+	"luci-app-thermal": {
+		"description": "Grant read access to temperature sensors",
+		"read": {
+			"ubus": {
+				"luci.thermal": [ "getSensors", "getTemps" ]
+			}
+		}
+	}
+}

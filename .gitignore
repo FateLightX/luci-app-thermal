@@ -1,0 +1,14 @@
+.DS_Store
+bin/
+build_dir/
+dl/
+logs/
+staging_dir/
+tmp/
+*.apk
+*.ipk
+*.tar.gz
+*.tar.zst
+
+# Derived from po/zh_Hans/thermal.po for the browser preview only; not packaged.
+luci-app-thermal/preview/zh_Hans.json

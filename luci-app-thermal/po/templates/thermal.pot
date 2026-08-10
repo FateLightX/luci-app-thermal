@@ -1,0 +1,65 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "%s assumed limit"
+msgstr ""
+
+msgid "%s critical"
+msgstr ""
+
+msgid "CPU big core %d"
+msgstr ""
+
+msgid "CPU core %d"
+msgstr ""
+
+msgid "CPU die %d"
+msgstr ""
+
+msgid "CPU little cores"
+msgstr ""
+
+msgid "CPU package"
+msgstr ""
+
+msgid "CPU package %d"
+msgstr ""
+
+msgid "CPU package (thermal zone)"
+msgstr ""
+
+msgid "Chipset (PCH)"
+msgstr ""
+
+msgid "Disk"
+msgstr ""
+
+msgid "Limits shown as assumed are not reported by the kernel for that sensor; a default for the device class is used instead."
+msgstr ""
+
+msgid "Mainboard"
+msgstr ""
+
+msgid "Mainboard (ACPI)"
+msgstr ""
+
+msgid "NVMe drive"
+msgstr ""
+
+msgid "NVMe sensor %d"
+msgstr ""
+
+msgid "No temperature sensors detected."
+msgstr ""
+
+msgid "Temperature"
+msgstr ""
+
+msgid "Wi-Fi radio"
+msgstr ""
+
+msgid "Wi-Fi radio %d"
+msgstr ""
+
+msgid "no reading"
+msgstr ""

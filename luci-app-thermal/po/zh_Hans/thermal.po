@@ -1,0 +1,68 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: zh_Hans\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "%s assumed limit"
+msgstr "%s 推定上限"
+
+msgid "%s critical"
+msgstr "%s 临界"
+
+msgid "CPU big core %d"
+msgstr "CPU 大核 %d"
+
+msgid "CPU core %d"
+msgstr "CPU 核心 %d"
+
+msgid "CPU die %d"
+msgstr "CPU 晶片 %d"
+
+msgid "CPU little cores"
+msgstr "CPU 小核"
+
+msgid "CPU package"
+msgstr "CPU 封装"
+
+msgid "CPU package %d"
+msgstr "CPU 封装 %d"
+
+msgid "CPU package (thermal zone)"
+msgstr "CPU 封装（热区）"
+
+msgid "Chipset (PCH)"
+msgstr "芯片组（PCH）"
+
+msgid "Disk"
+msgstr "硬盘"
+
+msgid "Limits shown as assumed are not reported by the kernel for that sensor; a default for the device class is used instead."
+msgstr "标记为推定的上限并非内核为该传感器报告的数值，而是按设备类型采用的默认值。"
+
+msgid "Mainboard"
+msgstr "主板"
+
+msgid "Mainboard (ACPI)"
+msgstr "主板（ACPI）"
+
+msgid "NVMe drive"
+msgstr "NVMe 固态硬盘"
+
+msgid "NVMe sensor %d"
+msgstr "NVMe 传感器 %d"
+
+msgid "No temperature sensors detected."
+msgstr "未检测到温度传感器。"
+
+msgid "Temperature"
+msgstr "温度"
+
+msgid "Wi-Fi radio"
+msgstr "无线电路"
+
+msgid "Wi-Fi radio %d"
+msgstr "无线电路 %d"
+
+msgid "no reading"
+msgstr "无读数"

@@ -1,0 +1,390 @@
+'use strict';
+
+/*
+ * luci.thermal — temperature sensor discovery for LuCI.
+ *
+ * Targets OpenWrt 25.x and later.
+ *
+ * Two sysfs trees carry temperatures, and a sensor can appear in both:
+ *
+ *   /sys/class/hwmon/hwmonN/temp*_input   — chips, drives, wifi, CPU DTS
+ *   /sys/class/thermal/thermal_zoneN/temp — SoC zones, ACPI zones
+ *
+ * When CONFIG_THERMAL_HWMON is on, every thermal zone also gets an hwmon
+ * twin. The twin carries the reading but NOT the zone's trip points, so
+ * naively preferring hwmon throws away the only real limits the kernel
+ * offered. This backend keeps the hwmon reading and folds the zone's trip
+ * points back in.
+ */
+
+import { lsdir, readfile, readlink, realpath, stat } from 'fs';
+
+const SYS_HWMON   = '/sys/class/hwmon';
+const SYS_THERMAL = '/sys/class/thermal';
+
+/*
+ * Kernel sentinel for "threshold register was never programmed".
+ * x86_pkg_temp reports trip points of -274000 m°C on boards where the BIOS
+ * left the thresholds unset; treating that as a real limit makes every
+ * derived percentage meaningless, so anything at or below absolute zero is
+ * discarded rather than clamped.
+ */
+const TEMP_INVALID_MC = -273150;
+
+/*
+ * Fallbacks, used only when a sensor reports no usable limit at all.
+ * A disk is not a CPU: drivetemp never exports _crit or _max, and 95 °C on
+ * an SSD is far past the point of data loss, so one global default would be
+ * wrong for most sensors on a typical box. Disk figures track the ~70 °C
+ * throttle point common to SATA SSDs rather than the lower band a spinning
+ * drive prefers, so an ordinary drive idling in the 50s does not read as
+ * nearly critical. Anything resolved from this table is flagged `assumed`
+ * so the UI can say so.
+ */
+const DEFAULTS = {
+	disk:  { hot: 60000,  crit: 70000  },
+	nvme:  { hot: 70000,  crit: 80000  },
+	cpu:   { hot: 95000,  crit: 105000 },
+	wifi:  { hot: 95000,  crit: 105000 },
+	board: { hot: 80000,  crit: 95000  },
+	other: { hot: 95000,  crit: 105000 },
+};
+
+function readStr(path) {
+	let s = readfile(path);
+	return s ? trim(s) : null;
+}
+
+function readInt(path) {
+	let s = readStr(path);
+	if (!s || !match(s, /^-?[0-9]+$/))
+		return null;
+	return int(s);
+}
+
+function isDir(path) {
+	return path && stat(path)?.type == 'directory';
+}
+
+/* Resolve a sysfs symlink to an absolute path without disturbing the cwd. */
+function resolveLink(dir, name) {
+	let target = readlink(dir + '/' + name);
+	if (!target)
+		return null;
+	if (substr(target, 0, 1) == '/')
+		return realpath(target);
+	/* Relative links are resolved against the link's own directory. */
+	return realpath(dir + '/' + target);
+}
+
+/* Coarse device class, driven by the hwmon driver name or zone type. */
+function classify(name) {
+	if (!name)
+		return 'other';
+	let n = lc(name);
+	if (n == 'drivetemp')
+		return 'disk';
+	if (index(n, 'nvme') == 0)
+		return 'nvme';
+	if (n == 'coretemp' || n == 'k10temp' || n == 'zenpower' || n == 'fam15h_power')
+		return 'cpu';
+	if (index(n, 'cpu') >= 0 || index(n, 'core') >= 0 || index(n, 'pkg') >= 0 ||
+	    index(n, 'soc') >= 0 || index(n, 'bigcore') >= 0 || index(n, 'littlecore') >= 0)
+		return 'cpu';
+	if (index(n, 'ath') == 0 || index(n, 'mt79') == 0 || index(n, 'iwl') == 0 ||
+	    index(n, 'phy') >= 0 || index(n, 'wifi') >= 0 || index(n, 'wmac') >= 0)
+		return 'wifi';
+	if (n == 'acpitz' || index(n, 'pch') >= 0 || index(n, 'board') >= 0 ||
+	    index(n, 'ambient') >= 0)
+		return 'board';
+	return 'other';
+}
+
+/*
+ * For storage sensors, name the drive rather than the sysfs attribute.
+ * drivetemp exports no temp1_label, so without this a disk shows up as
+ * "drivetemp / temp1" with no hint which disk it is.
+ */
+function blockInfo(devPath) {
+	if (!isDir(devPath))
+		return null;
+
+	let name = null;
+	let blockDir = devPath + '/block';
+	if (isDir(blockDir)) {
+		let ents = lsdir(blockDir);
+		if (ents && length(ents) > 0)
+			name = ents[0];
+	}
+	if (!name) {
+		/* NVMe hangs its namespaces directly off the controller. */
+		let ents = lsdir(devPath) || [];
+		for (let e in ents) {
+			if (match(e, /^nvme[0-9]+n[0-9]+$/)) {
+				name = e;
+				break;
+			}
+		}
+	}
+	if (!name)
+		return null;
+
+	let model = readStr(devPath + '/model');
+	if (!model)
+		model = readStr(devPath + '/device/model');
+
+	return { dev: name, model: model };
+}
+
+/* Every valid trip point declared by a thermal zone directory. */
+function tripsOf(zoneDir) {
+	let out = [];
+	if (!isDir(zoneDir))
+		return out;
+	let ents = lsdir(zoneDir);
+	if (!ents)
+		return out;
+	for (let e in ents) {
+		let m = match(e, /^trip_point_([0-9]+)_type$/);
+		if (!m)
+			continue;
+		let kind = readStr(zoneDir + '/' + e);
+		let temp = readInt(zoneDir + '/trip_point_' + m[1] + '_temp');
+		if (kind && temp != null && temp > TEMP_INVALID_MC)
+			push(out, { type: kind, temp: temp });
+	}
+	return out;
+}
+
+/*
+ * Reduce a trip-point list to the two thresholds a UI can act on.
+ *
+ * Warning tier  <- hot, passive, active, max
+ * Shutdown tier <- critical, emergency
+ *
+ * Both take the lowest candidate, because the lowest is the first one the
+ * kernel will act on. `max` belongs in the warning tier: on NVMe it is
+ * WCTEMP (the throttle point), not the critical composite temperature.
+ */
+function foldTrips(trips) {
+	let hot = null, crit = null;
+	for (let t in trips) {
+		let ty = lc(t.type);
+		if (ty == 'critical' || ty == 'emergency') {
+			if (crit == null || t.temp < crit)
+				crit = t.temp;
+		}
+		else if (ty == 'hot' || ty == 'passive' || ty == 'active' || ty == 'max') {
+			if (hot == null || t.temp < hot)
+				hot = t.temp;
+		}
+	}
+	return [ hot, crit ];
+}
+
+/* Apply class defaults for whatever the kernel left unspecified. */
+function resolveLimits(kind, hot, crit) {
+	let assumed = (hot == null && crit == null);
+	if (assumed) {
+		let d = DEFAULTS[kind] || DEFAULTS.other;
+		hot  = d.hot;
+		crit = d.crit;
+	}
+	else {
+		if (crit == null)
+			crit = hot;
+		if (hot == null)
+			hot = crit;
+	}
+	return { hot: hot, crit: crit, assumed: assumed };
+}
+
+function scanHwmon(claimedZones) {
+	let chips = [];
+	if (!isDir(SYS_HWMON))
+		return chips;
+
+	let ents = lsdir(SYS_HWMON) || [];
+	for (let item in ents) {
+		if (!match(item, /^hwmon[0-9]+$/))
+			continue;
+
+		let dir  = SYS_HWMON + '/' + item;
+		let name = readStr(dir + '/name');
+		let devPath = resolveLink(dir, 'device');
+
+		/*
+		 * If this hwmon node is the twin of a thermal zone, remember the
+		 * zone so the zone scan does not report the same sensor twice, and
+		 * borrow the zone's trip points, which the twin does not mirror.
+		 */
+		let zoneTrips = [];
+		if (devPath) {
+			claimedZones[devPath] = true;
+			if (match(devPath, /\/thermal_zone[0-9]+$/))
+				zoneTrips = tripsOf(devPath);
+		}
+
+		let kind = classify(name);
+		let disk = (kind == 'disk' || kind == 'nvme') ? blockInfo(devPath) : null;
+
+		let sensors = [];
+		let files = lsdir(dir) || [];
+		for (let f in files) {
+			if (!match(f, /^temp[0-9]+_input$/))
+				continue;
+
+			let base = replace(f, /_input$/, '');
+			let temp = readInt(dir + '/' + f);
+			if (temp == null)
+				continue;
+
+			let trips = [];
+			let crit  = readInt(dir + '/' + base + '_crit');
+			let emerg = readInt(dir + '/' + base + '_emergency');
+			let max   = readInt(dir + '/' + base + '_max');
+			if (emerg != null && emerg > TEMP_INVALID_MC)
+				push(trips, { type: 'emergency', temp: emerg });
+			if (crit != null && crit > TEMP_INVALID_MC)
+				push(trips, { type: 'critical', temp: crit });
+			if (max != null && max > TEMP_INVALID_MC)
+				push(trips, { type: 'max', temp: max });
+
+			/* Nothing of our own? fall back to the paired zone's trips. */
+			if (length(trips) == 0 && length(zoneTrips) > 0)
+				trips = zoneTrips;
+
+			let folded = foldTrips(trips);
+			let limits = resolveLimits(kind, folded[0], folded[1]);
+
+			let label = readStr(dir + '/' + base + '_label');
+			if (!label && disk)
+				label = disk.model ? disk.model : disk.dev;
+			if (!label)
+				label = base;
+
+			push(sensors, {
+				id     : item + '/' + base,
+				label  : label,
+				path   : dir + '/' + f,
+				temp   : temp,
+				hot    : limits.hot,
+				crit   : limits.crit,
+				assumed: limits.assumed,
+				trips  : trips,
+			});
+		}
+
+		if (length(sensors) == 0)
+			continue;
+
+		let detail = name ? name : item;
+		if (disk)
+			detail += ' · ' + disk.dev;
+
+		push(chips, {
+			id     : item,
+			name   : name ? name : item,
+			kind   : kind,
+			detail : detail,
+			sensors: sensors,
+		});
+	}
+	return chips;
+}
+
+function scanThermal(claimedZones) {
+	let chips = [];
+	if (!isDir(SYS_THERMAL))
+		return chips;
+
+	let ents = lsdir(SYS_THERMAL) || [];
+	for (let item in ents) {
+		if (!match(item, /^thermal_zone[0-9]+$/))
+			continue;
+
+		let dir  = SYS_THERMAL + '/' + item;
+		let real = realpath(dir);
+
+		/* Already reported through its hwmon twin. */
+		if (real && claimedZones[real])
+			continue;
+
+		let temp = readInt(dir + '/temp');
+		if (temp == null)
+			continue;
+
+		let type   = readStr(dir + '/type');
+		let kind   = classify(type);
+		let folded = foldTrips(tripsOf(dir));
+		let limits = resolveLimits(kind, folded[0], folded[1]);
+
+		push(chips, {
+			id     : item,
+			name   : type ? type : item,
+			kind   : kind,
+			detail : (type ? type : item) + ' · ' + item,
+			sensors: [ {
+				id     : item,
+				label  : type ? type : item,
+				path   : dir + '/temp',
+				temp   : temp,
+				hot    : limits.hot,
+				crit   : limits.crit,
+				assumed: limits.assumed,
+				trips  : tripsOf(dir),
+			} ],
+		});
+	}
+	return chips;
+}
+
+function getSensors() {
+	const claimedZones = {};
+	let chips = scanHwmon(claimedZones);
+	for (let c in scanThermal(claimedZones))
+		push(chips, c);
+	return { chips: chips };
+}
+
+/*
+ * Paths arrive from the browser, so they are validated by shape rather than
+ * by prefix: a prefix test alone lets "/sys/class/hwmon/../../etc/passwd"
+ * through. Only the two exact sysfs attribute forms this backend emits are
+ * accepted, which leaves no room for traversal.
+ */
+function isSensorPath(p) {
+	if (type(p) != 'string')
+		return false;
+	if (match(p, /^\/sys\/class\/hwmon\/hwmon[0-9]+\/temp[0-9]+_input$/))
+		return true;
+	if (match(p, /^\/sys\/class\/thermal\/thermal_zone[0-9]+\/temp$/))
+		return true;
+	return false;
+}
+
+const methods = {
+	/* Full topology: chips, sensors, limits. Called once per page load. */
+	getSensors: {
+		call: getSensors
+	},
+
+	/* Readings only, for polling. Paths come from getSensors. */
+	getTemps: {
+		args: { paths: [] },
+		call: function(request) {
+			const paths = request.args?.paths;
+			let out = {};
+			if (paths) {
+				for (let p in paths) {
+					if (!isSensorPath(p))
+						continue;
+					out[p] = readInt(p);
+				}
+			}
+			return { temps: out };
+		}
+	},
+};
+
+return { 'luci.thermal': methods };
