@@ -1,0 +1,33 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+
+<!--
+	One graph per chip. Up to eight traces are provided; a chip with fewer
+	sensors simply leaves the surplus polylines empty.
+
+	The threshold bands sit beneath the traces so a reading that enters the
+	throttle or critical zone is visible without decoding the legend. Their
+	geometry is set at runtime, and they stay collapsed when the limit falls
+	outside the plotted range.
+-->
+<svg width="100%" height="100%" version="1.1" xmlns="http://www.w3.org/2000/svg">
+	<rect id="band_warn" class="thermal-band-warn" x="0" y="0" width="100%" height="0" />
+	<rect id="band_crit" class="thermal-band-crit" x="0" y="0" width="100%" height="0" />
+
+	<line class="thermal-grid" x1="0" y1="25%" x2="100%" y2="25%" />
+	<line class="thermal-grid" x1="0" y1="50%" x2="100%" y2="50%" />
+	<line class="thermal-grid" x1="0" y1="75%" x2="100%" y2="75%" />
+
+	<text id="label_75" class="thermal-axis" x="6" y="25%" dy="-4"> </text>
+	<text id="label_50" class="thermal-axis" x="6" y="50%" dy="-4"> </text>
+	<text id="label_25" class="thermal-axis" x="6" y="75%" dy="-4"> </text>
+
+	<polyline id="line_0" class="thermal-trace thermal-series-0" points="" />
+	<polyline id="line_1" class="thermal-trace thermal-series-1" points="" />
+	<polyline id="line_2" class="thermal-trace thermal-series-2" points="" />
+	<polyline id="line_3" class="thermal-trace thermal-series-3" points="" />
+	<polyline id="line_4" class="thermal-trace thermal-series-4" points="" />
+	<polyline id="line_5" class="thermal-trace thermal-series-5" points="" />
+	<polyline id="line_6" class="thermal-trace thermal-series-6" points="" />
+	<polyline id="line_7" class="thermal-trace thermal-series-7" points="" />
+</svg>

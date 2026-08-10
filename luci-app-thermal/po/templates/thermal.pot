@@ -1,10 +1,19 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
+msgid "%s assumed"
+msgstr ""
+
 msgid "%s assumed limit"
 msgstr ""
 
 msgid "%s critical"
+msgstr ""
+
+msgid "(%d minute window, %d second interval)"
+msgstr ""
+
+msgid "Average"
 msgstr ""
 
 msgid "CPU big core %d"
@@ -31,16 +40,28 @@ msgstr ""
 msgid "Chipset (PCH)"
 msgstr ""
 
+msgid "Current"
+msgstr ""
+
 msgid "Disk"
 msgstr ""
 
+msgid "Limit"
+msgstr ""
+
 msgid "Limits shown as assumed are not reported by the kernel for that sensor; a default for the device class is used instead."
+msgstr ""
+
+msgid "Live readings from every temperature sensor the kernel exposes. Each graph is scaled to that device's own critical point, so a low trace means real headroom."
 msgstr ""
 
 msgid "Mainboard"
 msgstr ""
 
 msgid "Mainboard (ACPI)"
+msgstr ""
+
+msgid "Minimum"
 msgstr ""
 
 msgid "NVMe drive"
@@ -52,6 +73,18 @@ msgstr ""
 msgid "No temperature sensors detected."
 msgstr ""
 
+msgid "Peak"
+msgstr ""
+
+msgid "Processor"
+msgstr ""
+
+msgid "Sensor"
+msgstr ""
+
+msgid "State"
+msgstr ""
+
 msgid "Temperature"
 msgstr ""
 
@@ -61,5 +94,14 @@ msgstr ""
 msgid "Wi-Fi radio %d"
 msgstr ""
 
+msgid "Wireless"
+msgstr ""
+
+msgid "critical"
+msgstr ""
+
 msgid "no reading"
+msgstr ""
+
+msgid "throttling"
 msgstr ""

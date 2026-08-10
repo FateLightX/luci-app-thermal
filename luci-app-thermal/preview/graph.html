@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>luci-app-thermal — realtime graphs preview</title>
+<style>
+/* LuCI bootstrap theme variables, light and dark, as the page actually sets them. */
+:root {
+	--background-color-high: #fff;
+	--background-color-medium: #f9f9f9;
+	--border-color-medium: #d4d4d4;
+	--text-color-high: #404040;
+	--text-color-medium: #808080;
+	--error-color-medium: #e8210d;
+	--warn-color-high: #efbd0b;
+	--font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+	--font-mono: Monaco, "Andale Mono", "Courier New", monospace;
+	color-scheme: light;
+}
+:root[data-darkmode="true"] {
+	--background-color-high: #222;
+	--background-color-medium: #2b2b2b;
+	--border-color-medium: #444;
+	--text-color-high: #fff;
+	--text-color-medium: #a0a0a0;
+	--error-color-medium: #bf4e4c;
+	--warn-color-high: #a69461;
+	color-scheme: dark;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+	background: var(--background-color-medium);
+	color: var(--text-color-high);
+	font-family: var(--font-sans);
+	font-size: 13px;
+	line-height: 18px;
+	padding: 12px;
+}
+.pv-bar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pv-bar button { font: inherit; padding: 4px 10px; cursor: pointer; }
+#pv-status { color: var(--text-color-medium); font-size: 11px; }
+.wrap {
+	max-width: 1180px;
+	background: var(--background-color-high);
+	border: 1px solid var(--border-color-medium);
+	border-radius: 3px;
+	padding: 18px;
+}
+h2 { font-size: 19px; line-height: 26px; margin-bottom: 4px; font-weight: bold; }
+h3 { font-size: 15px; line-height: 22px; margin: 0 0 8px; font-weight: bold; }
+.cbi-map-descr { color: var(--text-color-medium); margin-bottom: 16px; }
+.cbi-section { margin-bottom: 26px; }
+.table { display: table; width: 100%; border-collapse: collapse; font-size: 13px; }
+.tr { display: table-row; }
+.th, .td { display: table-cell; padding: 8px 10px; text-align: left; vertical-align: middle;
+	border-top: 1px solid var(--border-color-medium); }
+.tr.table-titles .th { font-weight: bold; }
+.top { vertical-align: top; }
+.right { text-align: right; }
+small { font-size: 11px; color: var(--text-color-medium); }
+</style>
+</head>
+<body>
+<div class="pv-bar">
+	<button id="pv-theme">Toggle dark mode</button>
+	<button id="pv-heat">Simulate CPU load</button>
+	<button id="pv-lang">中文</button>
+	<span id="pv-status"></span>
+</div>
+<div class="wrap" id="view"></div>
+
+<script>
+/* =====================================================================
+   Minimal LuCI runtime shim.
+
+   As with preview.html, the real module file is fetched and executed
+   unmodified, so what renders is the shipped code path.
+   ===================================================================== */
+function E(tag, attrs, children) {
+	if (Array.isArray(tag)) {
+		const frag = document.createDocumentFragment();
+		(attrs || []).forEach(c => append(frag, c));
+		return frag;
+	}
+	if (typeof tag === 'string' && tag.trim().charAt(0) === '<') {
+		const tpl = document.createElement('template');
+		tpl.innerHTML = tag.trim();
+		return tpl.content.firstElementChild;
+	}
+	const el = document.createElement(tag);
+	if (attrs && typeof attrs === 'object' && !Array.isArray(attrs) && !(attrs instanceof Node)) {
+		for (const k in attrs) {
+			if (attrs[k] == null) continue;
+			if (typeof attrs[k] === 'function') el.addEventListener(k, attrs[k]);
+			else el.setAttribute(k, attrs[k]);
+		}
+	} else if (attrs != null) {
+		children = attrs;
+	}
+	append(el, children);
+	return el;
+}
+function append(parent, c) {
+	if (c == null) return;
+	if (Array.isArray(c)) return c.forEach(x => append(parent, x));
+	parent.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+}
+function _(s) { return (CATALOG && CATALOG[s]) || s; }
+
+let CATALOG = null;
+
+String.prototype.format = function () {
+	const args = arguments; let i = 0;
+	return this.replace(/%(?:\.(\d+))?([sdf%])/g, (m, prec, conv) => {
+		if (conv === '%') return '%';
+		const v = args[i++];
+		if (conv === 'd') return String(Math.round(Number(v)));
+		if (conv === 'f') return Number(v).toFixed(prec != null ? +prec : 6);
+		return String(v);
+	});
+};
+
+const L = {
+	resolveDefault: (p, d) => Promise.resolve(p).catch(() => d).then(v => v == null ? d : v),
+	isObject: v => v != null && typeof v === 'object' && !Array.isArray(v),
+	bind: (fn, self, ...a) => fn.bind(self, ...a),
+	resource: p => '../htdocs/luci-static/resources/' + p,
+};
+
+const view = { extend: proto => proto };
+const dom  = { content: (node, c) => { node.replaceChildren(); append(node, c); } };
+
+/* poll.add is driven manually here so the preview steps deterministically. */
+const POLLERS = [];
+const poll = { add: (fn, _iv) => POLLERS.push(fn) };
+
+/* The module calls response.text() synchronously, so the body is resolved
+   before the response object is handed back. */
+const request = { get: async url => {
+	const r = await fetch(url);
+	if (!r.ok) return { ok: false, statusText: 'HTTP ' + r.status, text: () => '' };
+	const body = await r.text();
+	return { ok: true, statusText: 'OK', text: () => body };
+} };
+</script>
+
+<script>
+/* =====================================================================
+   Fixture: verbatim getSensors() output captured from the target device
+   (Intel Celeron J4125, OpenWrt 25.12.5, kernel 6.12.94).
+   ===================================================================== */
+const FIXTURE = { chips: [
+	{ id: 'hwmon0', name: 'acpitz', kind: 'board', detail: 'acpitz', sensors: [
+		{ id: 'hwmon0/temp1', label: 'temp1', path: '/sys/class/hwmon/hwmon0/temp1_input',
+		  temp: 42000, hot: 65000, crit: 95000, assumed: false } ] },
+	{ id: 'hwmon1', name: 'coretemp', kind: 'cpu', detail: 'coretemp', sensors: [
+		{ id: 'hwmon1/temp1', label: 'Package id 0', path: '/sys/class/hwmon/hwmon1/temp1_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp2', label: 'Core 0', path: '/sys/class/hwmon/hwmon1/temp2_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp3', label: 'Core 1', path: '/sys/class/hwmon/hwmon1/temp3_input',
+		  temp: 43000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp4', label: 'Core 2', path: '/sys/class/hwmon/hwmon1/temp4_input',
+		  temp: 43000, hot: 105000, crit: 105000, assumed: false },
+		{ id: 'hwmon1/temp5', label: 'Core 3', path: '/sys/class/hwmon/hwmon1/temp5_input',
+		  temp: 42000, hot: 105000, crit: 105000, assumed: false } ] },
+	{ id: 'hwmon2', name: 'drivetemp', kind: 'disk', detail: 'drivetemp · sda', sensors: [
+		{ id: 'hwmon2/temp1', label: 'Netac SSD 120GB', path: '/sys/class/hwmon/hwmon2/temp1_input',
+		  temp: 54000, hot: 60000, crit: 70000, assumed: true } ] },
+	{ id: 'thermal_zone1', name: 'x86_pkg_temp', kind: 'cpu', detail: 'x86_pkg_temp · thermal_zone1',
+	  sensors: [
+		{ id: 'thermal_zone1', label: 'x86_pkg_temp', path: '/sys/class/thermal/thermal_zone1/temp',
+		  temp: 42000, hot: 95000, crit: 105000, assumed: true } ] },
+] };
+
+/* A deterministic walk so successive ticks draw a real trace rather than a
+   flat line. LOAD raises the CPU chips toward their throttle point. */
+let LOAD = false, TICK = 0;
+function fixtureTemps() {
+	const out = {};
+	TICK++;
+	for (const c of FIXTURE.chips)
+		for (const s of c.sensors) {
+			const wave = Math.sin((TICK + s.path.length) / 5) * 1500;
+			const boost = (LOAD && c.kind === 'cpu') ? 46000 : 0;
+			out[s.path] = Math.round(s.temp + wave + boost);
+		}
+	return out;
+}
+
+const rpc = { declare(opts) {
+	return function () {
+		if (opts.method === 'getSensors') return Promise.resolve(FIXTURE.chips);
+		return Promise.resolve(fixtureTemps());
+	};
+} };
+
+const MODULES = { view, dom, poll, request, rpc };
+</script>
+
+<script>
+(async function () {
+	const status = document.getElementById('pv-status');
+	const src = await fetch('../htdocs/luci-static/resources/view/thermal/graph.js',
+			{ cache: 'no-store' })
+		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
+
+	const requires = [...src.matchAll(/^'require ([\w.]+)';$/gm)].map(m => m[1]);
+	const body = src.replace(/^'(use strict|require [\w.]+)';$/gm, '');
+	const names = requires.map(r => r.split('.').pop());
+
+	const root = document.getElementById('view');
+
+	function instantiate() {
+		POLLERS.length = 0;
+		return new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
+			...names.map(n => MODULES[n]), E, _, L);
+	}
+
+	let mod = instantiate();
+
+	async function build() {
+		const data = await mod.load();
+		root.replaceChildren(mod.render(data));
+	}
+	await build();
+
+	/* Drive several poll ticks so the traces have history to draw. */
+	async function spin(n) {
+		for (let i = 0; i < n; i++)
+			for (const fn of POLLERS)
+				await fn();
+	}
+	await spin(40);
+
+	document.getElementById('pv-heat').addEventListener('click', async (e) => {
+		LOAD = !LOAD;
+		e.currentTarget.textContent = LOAD ? 'Restore idle' : 'Simulate CPU load';
+		await spin(40);
+	});
+	document.getElementById('pv-theme').addEventListener('click', () => {
+		const on = document.documentElement.getAttribute('data-darkmode') === 'true';
+		document.documentElement.setAttribute('data-darkmode', on ? 'false' : 'true');
+	});
+
+	const langBtn = document.getElementById('pv-lang');
+	let langOn = false, zh = null;
+
+	async function setLang(on) {
+		langOn = on;
+		if (langOn && !zh)
+			zh = await fetch('zh_Hans.json').then(r => r.json());
+		CATALOG = langOn ? zh : null;
+		langBtn.textContent = langOn ? 'EN' : '中文';
+		mod = instantiate();
+		await build();
+		await spin(40);
+	}
+	langBtn.addEventListener('click', () => setLang(!langOn));
+
+	status.textContent = 'real module · ' + requires.join(', ') + ' shimmed · device fixture';
+
+	const qs = new URLSearchParams(location.search);
+	if (qs.get('shot') === '1') {
+		document.querySelector('.pv-bar').style.display = 'none';
+		if (qs.get('lang') === 'zh') await setLang(true);
+		if (qs.get('load') === '1') { LOAD = true; await spin(40); }
+		document.documentElement.setAttribute('data-shot', 'ready');
+	}
+})().catch(e => {
+	document.getElementById('pv-status').textContent = 'FAILED: ' + e.message;
+	console.error(e);
+});
+</script>
+</body>
+</html>

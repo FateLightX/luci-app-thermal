@@ -3,14 +3,12 @@
 Temperature sensors for the OpenWrt LuCI status page.
 
 Adds a **Temperature** block to *Status → Overview*, alongside Memory and
-Storage, using the same `.cbi-progressbar` those blocks use. No separate menu
-entry, no extra page.
+Storage, using the same `.cbi-progressbar` those blocks use, plus a realtime
+graph page at *Status → Realtime Graphs → Temperature*.
 
 **Requires OpenWrt 25.x or later.**
 
 ![Status → Overview](preview/screenshot.png)
-
-*Status → Overview on an Intel Celeron J4125, LuCI in Simplified Chinese.*
 
 ## What it reads
 
@@ -23,7 +21,21 @@ with no per-device special-casing:
 | thermal | `/sys/class/thermal/thermal_zone*/temp` | SoC zones, ACPI zones |
 
 Disk temperature needs `kmod-hwmon-drivetemp` (SATA/SAS) — NVMe works out of
-the box, since `kmod-nvme` forces `CONFIG_NVME_HWMON=y`.
+the box, since `kmod-nvme` forces `CONFIG_NVME_HWMON=y`. The package depends
+on `kmod-hwmon-drivetemp` on x86 targets, so a built x86 image reads SATA
+drives without extra setup; on other targets the dependency is absent and the
+module can be installed manually.
+
+## The graph page
+
+One graph per chip, so the sensors that share a critical point share an axis.
+A CPU's package and per-core readings belong on one plot; a disk at 54 °C and
+a CPU core at 42 °C do not, because their limits are 70 and 105 and a shared
+axis would misstate both. The y-axis is anchored to the chip's critical point
+rather than the observed peak, so a trace that sits low means real headroom.
+Threshold bands behind the traces mark where throttling and the critical zone
+begin, and a row gains a text label — not just colour — once its own sensor
+crosses either.
 
 ## What it does differently
 
@@ -75,26 +87,32 @@ like `/sys/class/hwmon/../../etc/passwd` is rejected rather than read.
 
 ```
 Makefile
-htdocs/luci-static/resources/view/status/include/29_thermal.js   UI block
+htdocs/luci-static/resources/view/status/include/29_thermal.js   Overview block
+htdocs/luci-static/resources/view/thermal/graph.js               graph page
+htdocs/luci-static/resources/svg/thermal.svg                     graph template
 root/usr/share/rpcd/ucode/luci.thermal                           ubus backend
 root/usr/share/rpcd/acl.d/luci-app-thermal.json                  read-only ACL
+root/usr/share/luci/menu.d/luci-app-thermal.json                 graph menu entry
 po/                                                              translations
 preview/preview.html                                             offline preview
+preview/graph.html                                               offline preview
 ```
 
 ## Preview
 
-`preview/preview.html` runs the **real** `29_thermal.js` — fetched and
-executed unmodified — against a fixture captured from live hardware, with
-`baseclass` and `rpc` shimmed. Serve the package root and open it:
+Both previews run the **real** view code — fetched and executed unmodified —
+against a fixture captured from live hardware, with `baseclass` and `rpc`
+shimmed. Serve the package root:
 
 ```bash
 python3 -m http.server 8799
 ```
 
-Then visit `http://localhost:8799/preview/preview.html`. It needs no router
-and no network. The 中文 button swaps in `po/zh_Hans/thermal.po` so the
-translation can be checked without building.
+Then visit `http://localhost:8799/preview/preview.html` for the Overview block
+or `http://localhost:8799/preview/graph.html` for the graph page. Neither
+needs a router or a network. `graph.html` has a load toggle that drives
+synthetic temperatures past the trip points, which is how the threshold bands
+and state labels were verified.
 
 ## Building
 

@@ -8,17 +8,30 @@
 set -eu
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-src="$root/luci-app-thermal/htdocs/luci-static/resources/view/status/include/29_thermal.js"
 pot="$root/luci-app-thermal/po/templates/thermal.pot"
 
-[ -f "$src" ] || { echo "missing source: $src" >&2; exit 1; }
+# Every view that renders user-visible text. A view added here but left out of
+# this list would have its strings silently reported as stale.
+srcs="$root/luci-app-thermal/htdocs/luci-static/resources/view/status/include/29_thermal.js
+$root/luci-app-thermal/htdocs/luci-static/resources/view/thermal/graph.js"
+
+for src in $srcs; do
+	[ -f "$src" ] || { echo "missing source: $src" >&2; exit 1; }
+done
 [ -f "$pot" ] || { echo "missing template: $pot" >&2; exit 1; }
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
-# Translatable strings as they appear in the code: _('...')
-sed -n "s/.*_('\([^']*\)').*/\1/p" "$src" | sort -u > "$work/code"
+# Translatable strings as they appear in the code: _('...').
+#
+# grep -oE rather than sed, for two reasons: it catches every occurrence on a
+# line instead of just the last, and the alternation handles a string that
+# contains an escaped apostrophe (device\'s), which a [^']* class cannot.
+# The captured text is then unescaped back to what _() actually receives.
+for src in $srcs; do
+	grep -oE "_\('([^'\\\\]|\\\\.)*'\)" "$src"
+done | sed "s/^_('//; s/')$//; s/\\\\'/'/g" | sort -u > "$work/code"
 
 # Every string the code passes through _() must be in the template, and every
 # template entry must still exist in the code.
