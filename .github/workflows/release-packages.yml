@@ -34,7 +34,7 @@ jobs:
 
   release:
     needs: validate
-    name: x86_64-openwrt-25.12 release
+    name: x86_64-SNAPSHOT release
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -50,7 +50,7 @@ jobs:
       - name: build
         uses: openwrt/gh-action-sdk@797d0e3d0eb13b355c3447f60d0179d4b43089e2 # main
         env:
-          ARCH: x86_64-openwrt-25.12
+          ARCH: x86_64-SNAPSHOT
           FEEDNAME: thermal
           PACKAGES: luci-app-thermal
           # INDEX/signing only take effect when the secrets exist; without them
@@ -74,7 +74,7 @@ jobs:
       - name: compress
         run: |
           set -eu
-          tar -c -z -f luci-app-thermal_x86_64-openwrt-25.12.tar.gz \
+          tar -c -z -f luci-app-thermal_x86_64-SNAPSHOT.tar.gz \
             -C bin/packages/x86_64/thermal .
 
       - name: release
@@ -84,10 +84,10 @@ jobs:
           name: ${{ needs.validate.outputs.release_version }}
           target_commitish: ${{ github.sha }}
           files: |
-            luci-app-thermal_x86_64-openwrt-25.12.tar.gz
+            luci-app-thermal_x86_64-SNAPSHOT.tar.gz
 
       - name: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: luci-app-thermal_x86_64-openwrt-25.12
+          name: luci-app-thermal_x86_64-SNAPSHOT
           path: bin/packages/x86_64/thermal

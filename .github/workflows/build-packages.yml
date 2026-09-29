@@ -38,8 +38,13 @@ jobs:
         # The package is architecture-independent (LUCI_PKGARCH:=all), so one
         # SDK is enough to produce the shipping .apk. x86_64 matches the
         # device this was developed against.
+        #
+        # x86_64-SNAPSHOT is the rolling OpenWrt main-branch snapshot SDK, so
+        # the build follows the newest OpenWrt instead of a frozen release
+        # branch. The container is rebuilt daily and ships only setup.sh, which
+        # pulls the matching snapshot SDK from downloads.openwrt.org.
         arch:
-          - x86_64-openwrt-25.12
+          - x86_64-SNAPSHOT
 
     steps:
       - name: checkout
