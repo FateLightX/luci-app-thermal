@@ -9,5 +9,16 @@
 		"depends": {
 			"acl": [ "luci-app-thermal" ]
 		}
+	},
+	"admin/status/realtime/thermal/settings": {
+		"title": "Settings",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "thermal/settings"
+		},
+		"depends": {
+			"acl": [ "luci-app-thermal" ]
+		}
 	}
 }

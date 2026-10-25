@@ -8,6 +8,10 @@ graph page at *Status → Realtime Graphs → Temperature*.
 
 **Requires OpenWrt 25.x or later.**
 
+Sensors found on the Overview are re-checked once a minute, and the graph page
+does the same, so a disk plugged in after the page was opened appears without a
+manual reload.
+
 ![Status → Overview](preview/screenshot.png)
 
 ## What it reads
@@ -37,9 +41,14 @@ Threshold bands behind the traces mark where throttling and the critical zone
 begin, and a row gains a text label — not just colour — once its own sensor
 crosses either.
 
+A chip plots at most eight traces. Boards with more sensors — a 16-core CPU
+exposes a package sensor plus one per core — keep every sensor in the table
+below the graph, with current, minimum, average and peak, and the page says
+how many are being drawn.
+
 ## What it does differently
 
-Three things that go wrong when you read these trees naively:
+Five things that go wrong when you read these trees naively:
 
 **Trip points survive the hwmon/thermal merge.** With `CONFIG_THERMAL_HWMON`
 enabled, every thermal zone also gets an hwmon twin. The twin carries the
@@ -66,6 +75,19 @@ per-class default and the UI says so:
 | cpu / wifi / other | 95 °C | 105 °C |
 | board | 80 °C | 95 °C |
 
+**A hot-only sensor is not called critical.** Some zones declare a passive or
+hot trip but no critical point. Instead of relabelling that throttle point as
+a shutdown limit, the reading is scaled against it and the UI says
+"throttling limit", so the row never turns red for a sensor that has no real
+critical threshold.
+
+**Limits can be overridden per sensor.** *Status → Realtime Graphs →
+Temperature → Settings* edits `/etc/config/thermal`: a throttle or critical
+limit in °C, or a hidden flag. An override replaces the kernel value and the
+assumed default; a hidden sensor stays listed in the settings so it can be
+shown again. Changes reach the Overview on its next minute scan and the graph
+page on its next topology check.
+
 Warning and shutdown tiers are folded from the trip list by *lowest wins*,
 because the lowest is the first one the kernel acts on. `max` counts as a
 warning, not a shutdown: on NVMe it is WCTEMP (the throttle point), not the
@@ -78,21 +100,30 @@ ubus call luci.thermal getSensors
 ubus call luci.thermal getTemps '{"paths":["/sys/class/hwmon/hwmon1/temp1_input"]}'
 ```
 
-`getSensors` returns the full topology once; `getTemps` returns readings only
-and is what the poll loop uses. Paths passed to `getTemps` are validated
-against the exact two sysfs attribute shapes this backend emits, so a prefix
-like `/sys/class/hwmon/../../etc/passwd` is rejected rather than read.
+`getSensors` returns the full topology, with `/etc/config/thermal` overrides
+applied; `getTemps` returns readings only and is what the poll loop uses. Paths
+passed to `getTemps` are validated against the exact two sysfs attribute shapes
+this backend emits, so a prefix like `/sys/class/hwmon/../../etc/passwd` is
+rejected rather than read.
+
+The Overview shows one row per chip — its hottest sensor — and links to the
+realtime page for the full per-sensor view. It re-enumerates sensors every
+minute, and the graph page does the same, so hardware added after the page was
+opened appears without a manual reload.
 
 ## Layout
 
 ```
 Makefile
-htdocs/luci-static/resources/view/status/include/29_thermal.js   Overview block
+htdocs/luci-static/resources/view/status/include/27_thermal.js   Overview block
 htdocs/luci-static/resources/view/thermal/graph.js               graph page
+htdocs/luci-static/resources/view/thermal/settings.js            limits editor
+htdocs/luci-static/resources/thermal/common.js                   shared naming
 htdocs/luci-static/resources/svg/thermal.svg                     graph template
 root/usr/share/rpcd/ucode/luci.thermal                           ubus backend
-root/usr/share/rpcd/acl.d/luci-app-thermal.json                  read-only ACL
-root/usr/share/luci/menu.d/luci-app-thermal.json                 graph menu entry
+root/etc/config/thermal                                          limit overrides
+root/usr/share/rpcd/acl.d/luci-app-thermal.json                  ubus/UCI ACL
+root/usr/share/luci/menu.d/luci-app-thermal.json                 menu entries
 po/                                                              translations
 preview/preview.html                                             offline preview
 preview/graph.html                                               offline preview
@@ -101,8 +132,10 @@ preview/graph.html                                               offline preview
 ## Preview
 
 Both previews run the **real** view code — fetched and executed unmodified —
-against a fixture captured from live hardware, with `baseclass` and `rpc`
-shimmed. Serve the package root:
+against a fixture captured from live hardware, with `baseclass`, `rpc` and the
+shared naming module shimmed. The 中文 button parses the shipped
+`po/zh_Hans/thermal.po` directly, so there is no generated catalogue to keep
+in sync. Serve the package root:
 
 ```bash
 python3 -m http.server 8799
@@ -121,6 +154,13 @@ Drop into an OpenWrt buildroot with the LuCI feed:
 ```bash
 make package/luci-app-thermal/compile V=s
 ```
+
+## Versioning
+
+`PKG_VERSION` is the commit date (`YYYY.MM.DD`), read by `scripts/version.sh`
+and used as the release tag (`v2026.10.25`). `PKG_RELEASE` keeps LuCI's
+default of `1`. Building a tarball without git falls back to the constant in
+the Makefile, which can be overridden on the make command line.
 
 ## License
 

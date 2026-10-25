@@ -12,8 +12,10 @@ pot="$root/luci-app-thermal/po/templates/thermal.pot"
 
 # Every view that renders user-visible text. A view added here but left out of
 # this list would have its strings silently reported as stale.
-srcs="$root/luci-app-thermal/htdocs/luci-static/resources/view/status/include/29_thermal.js
-$root/luci-app-thermal/htdocs/luci-static/resources/view/thermal/graph.js"
+srcs="$root/luci-app-thermal/htdocs/luci-static/resources/view/status/include/27_thermal.js
+$root/luci-app-thermal/htdocs/luci-static/resources/view/thermal/graph.js
+$root/luci-app-thermal/htdocs/luci-static/resources/view/thermal/settings.js
+$root/luci-app-thermal/htdocs/luci-static/resources/thermal/common.js"
 
 for src in $srcs; do
 	[ -f "$src" ] || { echo "missing source: $src" >&2; exit 1; }

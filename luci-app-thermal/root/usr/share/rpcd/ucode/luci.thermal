@@ -18,9 +18,11 @@
  */
 
 import { lsdir, readfile, readlink, realpath, stat } from 'fs';
+import { cursor } from 'uci';
 
 const SYS_HWMON   = '/sys/class/hwmon';
 const SYS_THERMAL = '/sys/class/thermal';
+const CONFIG      = 'thermal';
 
 /*
  * Kernel sentinel for "threshold register was never programmed".
@@ -182,9 +184,17 @@ function foldTrips(trips) {
 	return [ hot, crit ];
 }
 
-/* Apply class defaults for whatever the kernel left unspecified. */
+/*
+ * Apply class defaults for whatever the kernel left unspecified.
+ *
+ * A sensor that declares only a hot (or passive/active) trip has no critical
+ * point at all. Its reading is still scaled against that trip, because there
+ * is nothing else to scale it against, but `critDerived` tells the UI that
+ * crossing it means throttling, not an imminent shutdown.
+ */
 function resolveLimits(kind, hot, crit) {
 	let assumed = (hot == null && crit == null);
+	let critDerived = (crit == null && hot != null);
 	if (assumed) {
 		let d = DEFAULTS[kind] || DEFAULTS.other;
 		hot  = d.hot;
@@ -196,7 +206,7 @@ function resolveLimits(kind, hot, crit) {
 		if (hot == null)
 			hot = crit;
 	}
-	return { hot: hot, crit: crit, assumed: assumed };
+	return { hot: hot, crit: crit, assumed: assumed, critDerived: critDerived };
 }
 
 function scanHwmon(claimedZones) {
@@ -264,14 +274,15 @@ function scanHwmon(claimedZones) {
 				label = base;
 
 			push(sensors, {
-				id     : item + '/' + base,
-				label  : label,
-				path   : dir + '/' + f,
-				temp   : temp,
-				hot    : limits.hot,
-				crit   : limits.crit,
-				assumed: limits.assumed,
-				trips  : trips,
+				id         : item + '/' + base,
+				label      : label,
+				path       : dir + '/' + f,
+				temp       : temp,
+				hot        : limits.hot,
+				crit       : limits.crit,
+				assumed    : limits.assumed,
+				critDerived: limits.critDerived,
+				trips      : trips,
 			});
 		}
 
@@ -287,6 +298,9 @@ function scanHwmon(claimedZones) {
 			name   : name ? name : item,
 			kind   : kind,
 			detail : detail,
+			/* Structured device name (sda, nvme0n1) for the UI to label
+			   drives with; `detail` is for the one-line raw display. */
+			device : disk ? disk.dev : null,
 			sensors: sensors,
 		});
 	}
@@ -316,7 +330,8 @@ function scanThermal(claimedZones) {
 
 		let type   = readStr(dir + '/type');
 		let kind   = classify(type);
-		let folded = foldTrips(tripsOf(dir));
+		let trips  = tripsOf(dir);
+		let folded = foldTrips(trips);
 		let limits = resolveLimits(kind, folded[0], folded[1]);
 
 		push(chips, {
@@ -324,15 +339,17 @@ function scanThermal(claimedZones) {
 			name   : type ? type : item,
 			kind   : kind,
 			detail : (type ? type : item) + ' · ' + item,
+			device : null,
 			sensors: [ {
-				id     : item,
-				label  : type ? type : item,
-				path   : dir + '/temp',
-				temp   : temp,
-				hot    : limits.hot,
-				crit   : limits.crit,
-				assumed: limits.assumed,
-				trips  : tripsOf(dir),
+				id         : item,
+				label      : type ? type : item,
+				path       : dir + '/temp',
+				temp       : temp,
+				hot        : limits.hot,
+				crit       : limits.crit,
+				assumed    : limits.assumed,
+				critDerived: limits.critDerived,
+				trips      : trips,
 			} ],
 		});
 	}
@@ -344,7 +361,78 @@ function getSensors() {
 	let chips = scanHwmon(claimedZones);
 	for (let c in scanThermal(claimedZones))
 		push(chips, c);
-	return { chips: chips };
+	return { chips: applyOverrides(chips, uciOverrides()) };
+}
+
+/*
+ * Per-sensor overrides from /etc/config/thermal. Limits are stored in °C
+ * because that is what the settings page shows; the backend works in m°C.
+ * A config that cannot be read must never take the sensor list down.
+ */
+function celsiusToMilli(v) {
+	if (v == null || v === '')
+		return null;
+
+	let n = float(v);
+	if (n == null || !(n > TEMP_INVALID_MC / 1000) || n > 200)
+		return null;
+
+	return int(n * 1000 + (n < 0 ? -0.5 : 0.5));
+}
+
+function uciOverrides() {
+	let out = {};
+
+	try {
+		let uci = cursor();
+		uci.load(CONFIG);
+
+		uci.foreach(CONFIG, 'sensor', function(s) {
+			if (!s.path || !isSensorPath(s.path))
+				return;
+
+			out[s.path] = {
+				hot: celsiusToMilli(s.hot),
+				crit: celsiusToMilli(s.crit),
+				hidden: (s.hidden == '1' || s.hidden == 'true'),
+			};
+		});
+	}
+	catch (e) {
+		return {};
+	}
+
+	return out;
+}
+
+/* Hidden sensors stay in the topology: the settings page must still list them. */
+function applyOverrides(chips, overrides) {
+	for (let chip in chips) {
+		for (let s in chip.sensors) {
+			let o = overrides[s.path];
+			if (!o)
+				continue;
+
+			if (o.hot != null)
+				s.hot = o.hot;
+
+			if (o.crit != null) {
+				s.crit = o.crit;
+				s.critDerived = false;
+			}
+
+			if (o.hot != null || o.crit != null) {
+				s.assumed = false;
+				if (s.hot != null && s.crit != null && s.hot > s.crit)
+					s.hot = s.crit;
+			}
+
+			if (o.hidden)
+				s.hidden = true;
+		}
+	}
+
+	return chips;
 }
 
 /*

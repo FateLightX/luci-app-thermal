@@ -13,8 +13,14 @@ msgstr "%s 推定上限"
 msgid "%s critical"
 msgstr "%s 临界"
 
+msgid "%s throttling limit"
+msgstr "%s 降频上限"
+
 msgid "(%d minute window, %d second interval)"
 msgstr "（%d 分钟窗口，%d 秒间隔）"
+
+msgid "All sensors"
+msgstr "全部传感器"
 
 msgid "Average"
 msgstr "平均"
@@ -26,7 +32,7 @@ msgid "CPU core %d"
 msgstr "CPU 核心 %d"
 
 msgid "CPU die %d"
-msgstr "CPU 晶片 %d"
+msgstr "CPU 晶粒 %d"
 
 msgid "CPU little cores"
 msgstr "CPU 小核"
@@ -43,11 +49,20 @@ msgstr "CPU 封装（热区）"
 msgid "Chipset (PCH)"
 msgstr "芯片组（PCH）"
 
+msgid "Critical limit (°C)"
+msgstr "临界上限（°C）"
+
 msgid "Current"
 msgstr "当前"
 
 msgid "Disk"
 msgstr "硬盘"
+
+msgid "Hidden"
+msgstr "隐藏"
+
+msgid "Leave empty to keep the kernel-reported value or the device-class default."
+msgstr "留空则保留内核报告值或设备类型默认值。"
 
 msgid "Limit"
 msgstr "上限"
@@ -76,8 +91,17 @@ msgstr "NVMe 传感器 %d"
 msgid "No temperature sensors detected."
 msgstr "未检测到温度传感器。"
 
+msgid "One row per chip, showing its hottest sensor."
+msgstr "每颗芯片只显示最热的传感器。"
+
+msgid "Override warning and critical limits per sensor, or hide a sensor from the status pages."
+msgstr "逐个传感器覆盖降频与临界上限，或从状态页隐藏某个传感器。"
+
 msgid "Peak"
 msgstr "峰值"
+
+msgid "Plotting %d of %d sensors; all readings are listed below."
+msgstr "图中绘制 %d 个传感器（共 %d 个），下方列出全部读数。"
 
 msgid "Processor"
 msgstr "处理器"
@@ -85,17 +109,26 @@ msgstr "处理器"
 msgid "Sensor"
 msgstr "传感器"
 
+msgid "Sensor overrides"
+msgstr "传感器覆盖"
+
 msgid "State"
 msgstr "状态"
 
 msgid "Temperature"
 msgstr "温度"
 
+msgid "Temperature limits"
+msgstr "温度上限"
+
+msgid "Throttle limit (°C)"
+msgstr "降频上限（°C）"
+
 msgid "Wi-Fi radio"
-msgstr "无线电路"
+msgstr "无线射频"
 
 msgid "Wi-Fi radio %d"
-msgstr "无线电路 %d"
+msgstr "无线射频 %d"
 
 msgid "Wireless"
 msgstr "无线"
@@ -105,6 +138,9 @@ msgstr "超过临界"
 
 msgid "no reading"
 msgstr "无读数"
+
+msgid "not detected"
+msgstr "未检测到"
 
 msgid "throttling"
 msgstr "降频中"

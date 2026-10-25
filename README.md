@@ -12,8 +12,8 @@ as part of the page rather than a bolted-on panel.
 
 ## Why another temperature app
 
-Reading `/sys/class/hwmon` and `/sys/class/thermal` naively goes wrong in three
-specific ways. This package handles all three:
+Reading `/sys/class/hwmon` and `/sys/class/thermal` naively goes wrong in five
+specific ways. This package handles all five:
 
 **Trip points survive the hwmon/thermal merge.** With `CONFIG_THERMAL_HWMON`,
 every thermal zone gets an hwmon twin that carries the reading but *not* the
@@ -31,6 +31,16 @@ absolute zero is dropped rather than treated as a limit.
 Showing a disk against a 105 °C CPU limit makes it look fine right up until it
 isn't, so limits fall back to a per-device-class default and the UI labels them
 as assumed.
+
+**A hot-only trip is not a critical limit.** Some zones declare a passive or
+hot trip but no critical point. The UI scales against that trip and calls it a
+throttling limit, rather than turning the row red as if it were a shutdown
+threshold.
+
+**Limits are editable per sensor.** *Status → Realtime Graphs → Temperature →
+Settings* sets a throttle or critical limit in °C, or hides a sensor. Overrides
+live in `/etc/config/thermal`; hidden sensors stay listed so they can be
+restored.
 
 ## Install
 
@@ -77,7 +87,7 @@ cd luci-app-thermal && python3 -m http.server 8799
 ```
 
 Open `http://localhost:8799/preview/preview.html`. It executes the real
-`29_thermal.js` against a fixture captured from live hardware, with LuCI's
+`27_thermal.js` against a fixture captured from live hardware, with LuCI's
 `baseclass`/`rpc` shimmed — so what renders is the shipping code path, not a
 mock-up. The 中文 button swaps in the actual `po/zh_Hans/thermal.po`.
 

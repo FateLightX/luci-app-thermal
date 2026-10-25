@@ -1,0 +1,12 @@
+# Per-sensor temperature limits, edited from
+# Status -> Realtime Graphs -> Temperature -> Settings.
+#
+# config sensor
+#	option path '/sys/class/hwmon/hwmon2/temp1_input'
+#	option hot '60'
+#	option crit '70'
+#	option hidden '0'
+#
+# Limits are in °C. Leaving one unset keeps the kernel-reported value or the
+# device-class default. Hidden sensors stay listed here so they can be shown
+# again later.
