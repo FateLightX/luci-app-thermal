@@ -4,7 +4,6 @@
 'require poll';
 'require request';
 'require rpc';
-'require thermal.common as common';
 
 /*
  * Realtime temperature graphs, at Status > Realtime Graphs > Temperature.
@@ -75,8 +74,6 @@ document.head.append(E('style', { 'type': 'text/css' }, `
 	vertical-align: middle;
 	background: var(--thermal-series);
 }
-/* Rows beyond the plotted limit keep the legend indent without a colour. */
-.thermal-key-off { background: transparent; }
 .thermal-src {
 	font-family: var(--font-mono, monospace);
 	font-size: 11px;
@@ -115,21 +112,81 @@ const callTemps = rpc.declare({
 });
 
 const POLL_INTERVAL = 3;
-const TOPOLOGY_INTERVAL = 60000;
-const SVG_NS = 'http://www.w3.org/2000/svg';
 
-/*
- * The shipped SVG carries eight polylines and the palette has eight slots.
- * Boards with more sensors (a 16-core CPU exposes package + 16 cores) keep
- * every sensor in the table below the graph; only the first eight are drawn,
- * and the page says so instead of dropping them silently.
- */
-const MAX_SERIES = 8;
+/* Naming — see 29_thermal.js; kept in step with it deliberately. */
+const ACRONYMS = {
+	cpu: 'CPU', gpu: 'GPU', npu: 'NPU', vpu: 'VPU', tpu: 'TPU',
+	ddr: 'DDR', soc: 'SoC', pmic: 'PMIC', pch: 'PCH', mcu: 'MCU',
+	nvme: 'NVMe', ssd: 'SSD', hdd: 'HDD', wifi: 'Wi-Fi', ap: 'AP',
+};
+
+function humanize(s) {
+	return String(s)
+		.replace(/_(thermal|temp|thermal_zone)$/, '')
+		.split(/[_\-\s]+/)
+		.filter(Boolean)
+		.map((w, i) => ACRONYMS[w.toLowerCase()]
+			|| (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+		.join(' ') || String(s);
+}
 
 return view.extend({
 	chips: [],
 	paths: [],
 	graphs: [],
+
+	formatTemp(mc) {
+		return '%.1f °C'.format(mc / 1000);
+	},
+
+	prettyName(chip, sensor) {
+		const chipName = String(chip.name || '').toLowerCase();
+		const label = String(sensor.label || '');
+		let m;
+
+		switch (chip.kind) {
+		case 'cpu':
+			if ((m = label.match(/^Package id (\d+)$/)))
+				return (m[1] === '0') ? _('CPU package')
+				                      : _('CPU package %d').format(m[1]);
+			if ((m = label.match(/^Core (\d+)$/)))
+				return _('CPU core %d').format(m[1]);
+			if ((m = label.match(/^Tccd(\d+)$/i)))
+				return _('CPU die %d').format(m[1]);
+			if (chipName === 'x86_pkg_temp')
+				return _('CPU package (thermal zone)');
+			if ((m = chipName.match(/^bigcore(\d+)/)))
+				return _('CPU big core %d').format(m[1]);
+			if (chipName.indexOf('littlecore') === 0)
+				return _('CPU little cores');
+			return humanize(chipName);
+
+		case 'disk':
+			return label ? '%s — %s'.format(_('Disk'), label) : _('Disk');
+
+		case 'nvme':
+			if (/^Composite$/i.test(label))
+				return _('NVMe drive');
+			if ((m = label.match(/^Sensor (\d+)$/i)))
+				return _('NVMe sensor %d').format(m[1]);
+			return label ? '%s — %s'.format(_('NVMe drive'), label) : _('NVMe drive');
+
+		case 'wifi':
+			if ((m = chipName.match(/phy(\d+)/)))
+				return _('Wi-Fi radio %d').format(m[1]);
+			return _('Wi-Fi radio');
+
+		case 'board':
+			if (chipName === 'acpitz')
+				return _('Mainboard (ACPI)');
+			if (chipName.indexOf('pch') >= 0)
+				return _('Chipset (PCH)');
+			return _('Mainboard');
+
+		default:
+			return humanize(label && !/^temp\d+$/.test(label) ? label : chipName);
+		}
+	},
 
 	/*
 	 * A chip's own title: the shared hardware, not one of its sensors.
@@ -139,7 +196,22 @@ return view.extend({
 	 * that duplication legible instead of looking like two identical graphs.
 	 */
 	chipTitle(chip) {
-		return common.chipLabel(chip);
+		const sensors = chip.sensors || [];
+		const first = sensors[0];
+
+		switch (chip.kind) {
+		case 'cpu':
+			/* One sensor means this chip is a single view of the CPU rather
+			   than the per-core bank, so name that view specifically. */
+			if (sensors.length === 1 && first)
+				return this.prettyName(chip, first);
+			return _('Processor');
+		case 'disk':  return first ? this.prettyName(chip, first) : _('Disk');
+		case 'nvme':  return _('NVMe drive');
+		case 'wifi':  return first ? this.prettyName(chip, first) : _('Wireless');
+		case 'board': return first ? this.prettyName(chip, first) : _('Mainboard');
+		default:      return humanize(chip.name);
+		}
 	},
 
 	loadSVG(src) {
@@ -151,15 +223,6 @@ return view.extend({
 		});
 	},
 
-	/* Width of the box the SVG actually fills; 0 until the view is mounted. */
-	graphWidth(svg) {
-		if (svg && svg.clientWidth > 0)
-			return svg.clientWidth;
-
-		const viewEl = document.querySelector('#view');
-		return (viewEl ? viewEl.offsetWidth : 802) - 2;
-	},
-
 	/*
 	 * The axis top: the critical point, plus a margin so a trace at the limit
 	 * is still drawn inside the plot. Rounded up to a clean 10 °C step so the
@@ -167,7 +230,7 @@ return view.extend({
 	 */
 	axisPeak(chip) {
 		let crit = 0;
-		for (const s of common.visibleSensors(chip))
+		for (const s of (chip.sensors || []))
 			crit = Math.max(crit, s.crit || 0);
 
 		if (!crit)
@@ -177,34 +240,52 @@ return view.extend({
 	},
 
 	registerGraph(chip, svg) {
-		const width  = this.graphWidth(svg);
+		const viewEl = document.querySelector('#view');
+		const width  = (viewEl ? viewEl.offsetWidth : 800) - 2;
 		const height = 300 - 2;
 		const step   = 5;
 
 		const G = svg.firstElementChild;
-		const dataWanted = Math.max(1, Math.floor(width / step));
+		const dataWanted = Math.floor(width / step);
 		const peak = this.axisPeak(chip);
 		const scale = height / peak;
+
+		/* Minute markers, right-aligned so "now" sits at the right edge. */
+		for (let i = width % (step * 60); i < width; i += step * 60) {
+			const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+			line.setAttribute('x1', i);
+			line.setAttribute('y1', 0);
+			line.setAttribute('x2', i);
+			line.setAttribute('y2', '100%');
+			line.setAttribute('class', 'thermal-grid');
+
+			const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+			text.setAttribute('x', i + 5);
+			text.setAttribute('y', 15);
+			text.setAttribute('class', 'thermal-axis');
+			text.appendChild(document.createTextNode(
+				'%dm'.format(Math.round((width - i) / step / 60))));
+
+			G.insertBefore(line, G.firstChild);
+			G.appendChild(text);
+		}
 
 		/*
 		 * Threshold bands. A chip's sensors can carry different limits, so the
 		 * band marks the lowest — the first point at which anything throttles.
 		 */
 		let hot = Infinity, crit = Infinity;
-		for (const s of common.visibleSensors(chip)) {
+		for (const s of (chip.sensors || [])) {
 			if (s.hot)  hot  = Math.min(hot, s.hot);
-			/* A limit derived from a hot trip is a throttle point, not a
-			   critical one, and must not paint the critical band. */
-			if (s.crit && !s.critDerived) crit = Math.min(crit, s.crit);
+			if (s.crit) crit = Math.min(crit, s.crit);
 		}
 
 		const bandWarn = G.getElementById('band_warn');
 		const bandCrit = G.getElementById('band_crit');
 
-		if (bandWarn && isFinite(hot)) {
-			const top = isFinite(crit) ? crit : peak;
-			bandWarn.setAttribute('y', height - top * scale);
-			bandWarn.setAttribute('height', Math.max(0, (top - hot) * scale));
+		if (bandWarn && isFinite(hot) && isFinite(crit) && hot < crit) {
+			bandWarn.setAttribute('y', height - crit * scale);
+			bandWarn.setAttribute('height', Math.max(0, (crit - hot) * scale));
 		}
 		if (bandCrit && isFinite(crit)) {
 			bandCrit.setAttribute('y', 0);
@@ -218,95 +299,16 @@ return view.extend({
 				el.firstChild.data = '%d °C'.format(frac * peak / 1000);
 		}
 
-		const series = common.visibleSensors(chip).map((s, i) => ({
+		const series = (chip.sensors || []).slice(0, 8).map((s, i) => ({
 			path: s.path,
 			hot: s.hot,
 			crit: s.crit,
-			critDerived: s.critDerived,
-			/* Rows past the palette have no polyline, but they still keep a
-			   reading history so min/avg/peak stays correct in the table. */
-			el: (i < MAX_SERIES) ? G.getElementById('line_' + i) : null,
+			el: G.getElementById('line_' + i),
 			values: new Array(dataWanted).fill(NaN),
 			cur: NaN, min: NaN, max: NaN, avg: NaN,
 		}));
 
-		const ctx = { chip, svg, width, height, step, dataWanted, peak, scale, series };
-		this.graphs.push(ctx);
-		this.drawTimeAxis(ctx);
-	},
-
-	/* Minute markers, right-aligned so "now" sits at the right edge. */
-	drawTimeAxis(ctx) {
-		const G = ctx.svg.firstElementChild;
-
-		for (const el of G.querySelectorAll('.thermal-grid-x, .thermal-tick'))
-			el.remove();
-
-		for (let i = ctx.width % (ctx.step * 60); i < ctx.width; i += ctx.step * 60) {
-			const line = document.createElementNS(SVG_NS, 'line');
-			line.setAttribute('x1', i);
-			line.setAttribute('y1', 0);
-			line.setAttribute('x2', i);
-			line.setAttribute('y2', '100%');
-			line.setAttribute('class', 'thermal-grid thermal-grid-x');
-
-			const text = document.createElementNS(SVG_NS, 'text');
-			text.setAttribute('x', i + 5);
-			text.setAttribute('y', 15);
-			text.setAttribute('class', 'thermal-axis thermal-tick');
-			text.appendChild(document.createTextNode(
-				'%dm'.format(Math.round((ctx.width - i) / ctx.step / 60))));
-
-			G.insertBefore(line, G.firstChild);
-			G.appendChild(text);
-		}
-	},
-
-	windowLabel(samples) {
-		return _('(%d minute window, %d second interval)')
-			.format(Math.round(samples * POLL_INTERVAL / 60), POLL_INTERVAL);
-	},
-
-	/*
-	 * Window resize, and the first paint after mounting: the box is only
-	 * measurable once the section is in the document, so the initial width
-	 * taken from #view may be a few pixels off in themes with padding.
-	 * History keeps its samples; only the visible tail is re-windowed.
-	 */
-	resizeGraphs() {
-		for (const ctx of this.graphs) {
-			const width = this.graphWidth(ctx.svg);
-			const dataWanted = Math.max(1, Math.floor(width / ctx.step));
-
-			if (width === ctx.width && dataWanted === ctx.dataWanted)
-				continue;
-
-			for (const s of ctx.series) {
-				const delta = dataWanted - s.values.length;
-				if (delta > 0)
-					s.values.unshift(...new Array(delta).fill(NaN));
-				else if (delta < 0)
-					s.values.splice(0, -delta);
-			}
-
-			ctx.width = width;
-			ctx.dataWanted = dataWanted;
-
-			this.drawTimeAxis(ctx);
-			if (ctx.windowEl)
-				dom.content(ctx.windowEl, this.windowLabel(dataWanted));
-			this.redraw(ctx);
-		}
-	},
-
-	onResize() {
-		if (this._resizeTimer)
-			return;
-
-		this._resizeTimer = window.setTimeout(() => {
-			this._resizeTimer = null;
-			this.resizeGraphs();
-		}, 100);
+		this.graphs.push({ chip, svg, width, height, step, dataWanted, peak, scale, series });
 	},
 
 	redraw(ctx) {
@@ -333,41 +335,12 @@ return view.extend({
 	},
 
 	pollData() {
-		if (this._pollFn)
-			return;
+		poll.add(L.bind(function() {
+			if (!this.paths.length)
+				return Promise.resolve();
 
-		this._lastTopologyCheck = Date.now();
-
-		this._pollFn = L.bind(function() {
-			const due = (Date.now() - this._lastTopologyCheck) >= TOPOLOGY_INTERVAL;
-			const calls = [
-				this.paths.length
-					? L.resolveDefault(callTemps(this.paths), {})
-					: Promise.resolve({}),
-			];
-
-			if (due)
-				calls.push(L.resolveDefault(callSensors(), null));
-
-			return Promise.all(calls).then(L.bind(function(resp) {
-				if (due)
-					this._lastTopologyCheck = Date.now();
-
-				const chips = resp[1];
-				if (Array.isArray(chips) && this.topologySignature(chips) !== this.signature) {
-					this.chips = chips;
-					this.signature = this.topologySignature(chips);
-
-					/* New hardware invalidates the layout entirely; replace the
-					   map in place so the user keeps their page and scroll. */
-					const viewEl = document.querySelector('#view');
-					const map = this.render([ this.proto, chips ]);
-					if (viewEl)
-						dom.content(viewEl, map);
-					return;
-				}
-
-				const readings = L.isObject(resp[0]) ? resp[0] : {};
+			return L.resolveDefault(callTemps(this.paths), {}).then(L.bind(function(temps) {
+				const readings = L.isObject(temps) ? temps : {};
 
 				for (const ctx of this.graphs) {
 					for (const s of ctx.series) {
@@ -395,20 +368,7 @@ return view.extend({
 					this.updateReadout(ctx);
 				}
 			}, this));
-		}, this);
-
-		poll.add(this._pollFn, POLL_INTERVAL);
-	},
-
-	/* Everything a view renders, so a limits change also refreshes the page. */
-	topologySignature(chips) {
-		return JSON.stringify((chips || []).map(c => [
-			c.id, c.name, c.kind, c.device || '',
-			(c.sensors || []).map(s => [
-				s.path, s.label || '', s.hot, s.crit,
-				s.critDerived ? 1 : 0, s.assumed ? 1 : 0, s.hidden ? 1 : 0,
-			]),
-		]));
+		}, this), POLL_INTERVAL);
 	},
 
 	updateReadout(ctx) {
@@ -418,7 +378,7 @@ return view.extend({
 			for (const [key, val] of [['cur', s.cur], ['min', s.min], ['avg', s.avg], ['max', s.max]]) {
 				const cell = s.row.querySelector('[data-stat="%s"]'.format(key));
 				if (cell)
-					dom.content(cell, isNaN(val) ? '-' : common.formatTemp(val));
+					dom.content(cell, isNaN(val) ? '-' : this.formatTemp(val));
 			}
 			this.updateState(s);
 		}
@@ -436,12 +396,11 @@ return view.extend({
 		let cls = '', text = '';
 
 		if (!isNaN(s.cur)) {
-			/* Only a kernel-reported critical point may turn a row red. */
-			if (s.crit && !s.critDerived && s.cur >= s.crit) {
+			if (s.crit && s.cur >= s.crit) {
 				cls = 'crit';
 				text = _('critical');
 			}
-			else if (s.hot && (s.critDerived || s.hot < s.crit) && s.cur >= s.hot) {
+			else if (s.hot && s.crit && s.hot < s.crit && s.cur >= s.hot) {
 				cls = 'warn';
 				text = _('throttling');
 			}
@@ -457,20 +416,12 @@ return view.extend({
 		return Promise.all([
 			this.loadSVG(L.resource('svg/thermal.svg')),
 			L.resolveDefault(callSensors(), []),
-		]).then(L.bind(function(data) {
-			this.proto = data[0];
-			this.signature = this.topologySignature(data[1]);
-			return data;
-		}, this));
+		]);
 	},
 
 	render(data) {
-		const proto = data[0] || this.proto;
-		this.proto = proto;
+		const proto = data[0];
 		this.chips = Array.isArray(data[1]) ? data[1] : [];
-		this.signature = this.topologySignature(this.chips);
-		this.graphs = [];
-		this.paths = [];
 
 		const map = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('Temperature')),
@@ -481,15 +432,14 @@ return view.extend({
 		if (!this.chips.length) {
 			map.appendChild(E('div', { 'class': 'cbi-section' },
 				E('em', {}, _('No temperature sensors detected.'))));
-			/* Keep polling so hardware plugged in later still appears. */
-			this.pollData();
 			return map;
 		}
 
+		this.paths = [];
 		let anyAssumed = false;
 
 		for (const chip of this.chips) {
-			const sensors = common.visibleSensors(chip);
+			const sensors = (chip.sensors || []).slice(0, 8);
 			if (!sensors.length)
 				continue;
 
@@ -517,17 +467,13 @@ return view.extend({
 					anyAssumed = true;
 
 				const limit = sensor.assumed
-					? _('%s assumed').format(common.formatTemp(sensor.crit))
-					: sensor.critDerived
-						? _('%s throttling limit').format(common.formatTemp(sensor.crit))
-						: common.formatTemp(sensor.crit);
+					? _('%s assumed').format(this.formatTemp(sensor.crit))
+					: this.formatTemp(sensor.crit);
 
 				const row = E('tr', { 'class': 'tr' }, [
 					E('td', { 'class': 'td left top' }, [
-						(i < MAX_SERIES)
-							? E('span', { 'class': 'thermal-key thermal-series-%d'.format(i) })
-							: E('span', { 'class': 'thermal-key thermal-key-off' }),
-						common.prettyName(chip, sensor),
+						E('span', { 'class': 'thermal-key thermal-series-%d'.format(i) }),
+						this.prettyName(chip, sensor),
 						E('div', { 'class': 'thermal-src' }, sensor.path),
 					]),
 					E('td', { 'class': 'td left', 'data-stat': 'cur' }, '-'),
@@ -542,18 +488,12 @@ return view.extend({
 				table.appendChild(row);
 			});
 
-			const windowEl = E('small', {}, this.windowLabel(ctx.dataWanted));
-			ctx.windowEl = windowEl;
-
 			map.appendChild(E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, this.chipTitle(chip)),
 				svg,
-				(sensors.length > MAX_SERIES)
-					? E('div', { 'class': 'thermal-note' },
-						_('Plotting %d of %d sensors; all readings are listed below.')
-							.format(MAX_SERIES, sensors.length))
-					: null,
-				E('div', { 'class': 'right' }, windowEl),
+				E('div', { 'class': 'right' },
+					E('small', {}, _('(%d minute window, %d second interval)')
+						.format(Math.round(ctx.dataWanted * POLL_INTERVAL / 60), POLL_INTERVAL))),
 				E('br'),
 				table,
 			]));
@@ -565,13 +505,6 @@ return view.extend({
 					_('Limits shown as assumed are not reported by the kernel for that sensor; a default for the device class is used instead.'))));
 
 		this.pollData();
-
-		/* Measure the mounted box, and keep the traces in step with resizes. */
-		if (!this._resizeHandler) {
-			this._resizeHandler = () => this.onResize();
-			window.addEventListener('resize', this._resizeHandler);
-		}
-		this.onResize();
 
 		return map;
 	},

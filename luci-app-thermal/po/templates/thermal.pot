@@ -10,13 +10,7 @@ msgstr ""
 msgid "%s critical"
 msgstr ""
 
-msgid "%s throttling limit"
-msgstr ""
-
 msgid "(%d minute window, %d second interval)"
-msgstr ""
-
-msgid "All sensors"
 msgstr ""
 
 msgid "Average"
@@ -46,19 +40,10 @@ msgstr ""
 msgid "Chipset (PCH)"
 msgstr ""
 
-msgid "Critical limit (°C)"
-msgstr ""
-
 msgid "Current"
 msgstr ""
 
 msgid "Disk"
-msgstr ""
-
-msgid "Hidden"
-msgstr ""
-
-msgid "Leave empty to keep the kernel-reported value or the device-class default."
 msgstr ""
 
 msgid "Limit"
@@ -88,16 +73,7 @@ msgstr ""
 msgid "No temperature sensors detected."
 msgstr ""
 
-msgid "One row per chip, showing its hottest sensor."
-msgstr ""
-
-msgid "Override warning and critical limits per sensor, or hide a sensor from the status pages."
-msgstr ""
-
 msgid "Peak"
-msgstr ""
-
-msgid "Plotting %d of %d sensors; all readings are listed below."
 msgstr ""
 
 msgid "Processor"
@@ -106,19 +82,10 @@ msgstr ""
 msgid "Sensor"
 msgstr ""
 
-msgid "Sensor overrides"
-msgstr ""
-
 msgid "State"
 msgstr ""
 
 msgid "Temperature"
-msgstr ""
-
-msgid "Temperature limits"
-msgstr ""
-
-msgid "Throttle limit (°C)"
 msgstr ""
 
 msgid "Wi-Fi radio"
@@ -134,9 +101,6 @@ msgid "critical"
 msgstr ""
 
 msgid "no reading"
-msgstr ""
-
-msgid "not detected"
 msgstr ""
 
 msgid "throttling"

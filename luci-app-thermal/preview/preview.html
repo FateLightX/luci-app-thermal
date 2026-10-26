@@ -174,31 +174,6 @@ function _(s) { return (CATALOG && CATALOG[s]) || s; }
    the preview exercises the real catalogue rather than a hand-typed copy. */
 let CATALOG = null;
 
-/* Minimal reader for the single-line entries this catalogue ships. */
-function parsePO(text) {
-	const out = {};
-	let id = null;
-	const unquote = s => {
-		const a = s.indexOf('"'), b = s.lastIndexOf('"');
-		if (a < 0 || b <= a)
-			return null;
-		const raw = s.slice(a + 1, b);
-		try { return JSON.parse('"' + raw + '"'); }
-		catch (e) { return raw; }
-	};
-	for (const line of text.split(/\r?\n/)) {
-		if (line.indexOf('msgid ') === 0)
-			id = unquote(line);
-		else if (line.indexOf('msgstr ') === 0 && id != null) {
-			const val = unquote(line);
-			if (val)
-				out[id] = val;
-			id = null;
-		}
-	}
-	return out;
-}
-
 /* String.format, as provided by luci-base. */
 String.prototype.format = function () {
 	const args = arguments; let i = 0;
@@ -215,15 +190,8 @@ const L = {
 	resolveDefault: (p, d) => Promise.resolve(p).catch(() => d).then(v => v == null ? d : v),
 	isObject: v => v != null && typeof v === 'object' && !Array.isArray(v),
 	bind: (fn, self, ...a) => fn.bind(self, ...a),
-	url: p => '#' + p,
 };
-class baseclass {
-	static extend(proto) {
-		class Module extends this {}
-		Object.assign(Module.prototype, proto);
-		return Module;
-	}
-}
+const baseclass = { extend: proto => proto };
 </script>
 
 <script>
@@ -280,23 +248,14 @@ const MODULES = { baseclass, rpc };
 <script>
 (async function () {
 	const status = document.getElementById('pv-status');
-	const src = await fetch('../htdocs/luci-static/resources/view/status/include/27_thermal.js')
+	const src = await fetch('../htdocs/luci-static/resources/view/status/include/29_thermal.js')
 		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
 
-	/* Translate LuCI's 'require x [as y]' pragmas into shim bindings, then run
-	   the module body untouched so the preview exercises the real code. */
-	const requires = [...src.matchAll(/^'require ([\w.]+)(?: as (\w+))?';$/gm)]
-		.map(m => ({ mod: m[1], name: m[2] || m[1].split('.').pop() }));
-	const body = src.replace(/^'(?:use strict|require [^']+)';$/gm, '');
-	const names = requires.map(r => r.name);
-
-	/* The shared naming module is shipped code too. */
-	const commonSrc = await fetch('../htdocs/luci-static/resources/thermal/common.js',
-			{ cache: 'no-store' })
-		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
-	const Common = new Function('baseclass', '_', `'use strict';${
-		commonSrc.replace(/^'(?:use strict|require [^']+)';$/gm, '') }`)(baseclass, _);
-	MODULES.common = new Common();
+	/* Translate LuCI's 'require x' pragmas into shim bindings, then run the
+	   module body untouched so the preview exercises the real code. */
+	const requires = [...src.matchAll(/^'require ([\w.]+)';$/gm)].map(m => m[1]);
+	const body = src.replace(/^'(use strict|require [\w.]+)';$/gm, '');
+	const names = requires.map(r => r.split('.').pop());
 
 	const root = document.getElementById('pv-root');
 	let container = null;
@@ -305,9 +264,8 @@ const MODULES = { baseclass, rpc };
 	   in LuCI, so switching catalogue means rebuilding the module — which is
 	   also what a real page load in another language does. */
 	function instantiate() {
-		const Module = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
+		const mod = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
 			...names.map(n => MODULES[n]), E, _, L);
-		const mod = new Module();
 
 		/* Reproduce the chrome view/status/index.js puts around an include:
 		   .cbi-section > .cbi-title > h3 + Show/Hide toggle, then container. */
@@ -344,12 +302,8 @@ const MODULES = { baseclass, rpc };
 
 	async function setLang(on) {
 		langOn = on;
-		if (langOn && !zh) {
-			const po = await fetch('../po/zh_Hans/thermal.po', { cache: 'no-store' });
-			if (!po.ok)
-				throw new Error('HTTP ' + po.status);
-			zh = parsePO(await po.text());
-		}
+		if (langOn && !zh)
+			zh = await fetch('zh_Hans.json').then(r => r.json());
 		CATALOG = langOn ? zh : null;
 		langBtn.textContent = langOn ? 'EN' : '中文';
 		mod = instantiate();          /* re-evaluate title: under the new catalogue */
@@ -358,7 +312,7 @@ const MODULES = { baseclass, rpc };
 
 	langBtn.addEventListener('click', () => setLang(!langOn));
 
-	status.textContent = 'real module · ' + requires.map(r => r.mod).join(', ') + ' shimmed · device fixture';
+	status.textContent = 'real module · ' + requires.join(', ') + ' shimmed · device fixture';
 
 	/* ?shot=1 renders a clean frame for screenshot capture: toolbar hidden,
 	   optionally ?lang=zh. Sets data-shot on <html> when settled so a headless

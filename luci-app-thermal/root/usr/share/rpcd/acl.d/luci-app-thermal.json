@@ -1,14 +1,10 @@
 {
 	"luci-app-thermal": {
-		"description": "Read temperature sensors and edit their limits",
+		"description": "Grant read access to temperature sensors",
 		"read": {
 			"ubus": {
 				"luci.thermal": [ "getSensors", "getTemps" ]
-			},
-			"uci": [ "thermal" ]
-		},
-		"write": {
-			"uci": [ "thermal" ]
+			}
 		}
 	}
 }
