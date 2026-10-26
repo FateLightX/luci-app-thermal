@@ -154,7 +154,14 @@ const L = {
 	resource: p => '../htdocs/luci-static/resources/' + p,
 };
 
-const view = { extend: proto => proto };
+class baseclass {
+	static extend(proto) {
+		class Module extends this {}
+		Object.assign(Module.prototype, proto);
+		return Module;
+	}
+}
+const view = baseclass;
 const dom  = { content: (node, c) => { node.replaceChildren(); append(node, c); } };
 
 /* poll.add is driven manually here so the preview steps deterministically. */
@@ -241,15 +248,17 @@ const MODULES = { view, dom, poll, request, rpc };
 	const commonSrc = await fetch('../htdocs/luci-static/resources/thermal/common.js',
 			{ cache: 'no-store' })
 		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
-	MODULES.common = new Function('_', `'use strict';${
-		commonSrc.replace(/^'(?:use strict|require [^']+)';$/gm, '') }`)(_);
+	const Common = new Function('baseclass', '_', `'use strict';${
+		commonSrc.replace(/^'(?:use strict|require [^']+)';$/gm, '') }`)(baseclass, _);
+	MODULES.common = new Common();
 
 	const root = document.getElementById('view');
 
 	function instantiate() {
 		POLLERS.length = 0;
-		return new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
+		const Module = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
 			...names.map(n => MODULES[n]), E, _, L);
+		return new Module();
 	}
 
 	let mod = instantiate();

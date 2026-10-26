@@ -1,4 +1,5 @@
 'use strict';
+'require baseclass';
 
 /*
  * Shared sensor naming for the Overview block and the realtime graphs.
@@ -126,10 +127,10 @@ function prettyName(chip, sensor) {
 	}
 }
 
-return {
+return baseclass.extend({
 	humanize: humanize,
 	formatTemp: formatTemp,
 	prettyName: prettyName,
 	visibleSensors: visibleSensors,
 	chipLabel: chipLabel,
-};
+});

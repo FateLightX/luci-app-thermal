@@ -217,7 +217,13 @@ const L = {
 	bind: (fn, self, ...a) => fn.bind(self, ...a),
 	url: p => '#' + p,
 };
-const baseclass = { extend: proto => proto };
+class baseclass {
+	static extend(proto) {
+		class Module extends this {}
+		Object.assign(Module.prototype, proto);
+		return Module;
+	}
+}
 </script>
 
 <script>
@@ -288,8 +294,9 @@ const MODULES = { baseclass, rpc };
 	const commonSrc = await fetch('../htdocs/luci-static/resources/thermal/common.js',
 			{ cache: 'no-store' })
 		.then(r => r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status)));
-	MODULES.common = new Function('_', `'use strict';${
-		commonSrc.replace(/^'(?:use strict|require [^']+)';$/gm, '') }`)(_);
+	const Common = new Function('baseclass', '_', `'use strict';${
+		commonSrc.replace(/^'(?:use strict|require [^']+)';$/gm, '') }`)(baseclass, _);
+	MODULES.common = new Common();
 
 	const root = document.getElementById('pv-root');
 	let container = null;
@@ -298,8 +305,9 @@ const MODULES = { baseclass, rpc };
 	   in LuCI, so switching catalogue means rebuilding the module — which is
 	   also what a real page load in another language does. */
 	function instantiate() {
-		const mod = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
+		const Module = new Function(...names, 'E', '_', 'L', `'use strict';${body}`)(
 			...names.map(n => MODULES[n]), E, _, L);
+		const mod = new Module();
 
 		/* Reproduce the chrome view/status/index.js puts around an include:
 		   .cbi-section > .cbi-title > h3 + Show/Hide toggle, then container. */

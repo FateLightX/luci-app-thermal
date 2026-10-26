@@ -82,6 +82,10 @@ has no compiler. The SDK is required, not least because `po2lmo` must turn
 
 ## Preview without a router
 
+Run `node tests/check-common.js` to check the shared module with LuCI's real
+loader. This downloads a pinned upstream `luci.js` and `cbi.js`; pass a local
+directory containing both files to test against a specific router version.
+
 ```sh
 cd luci-app-thermal && python3 -m http.server 8799
 ```

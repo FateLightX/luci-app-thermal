@@ -30,6 +30,9 @@ jobs:
       - name: verify translation catalogues
         run: ./tests/check-i18n.sh
 
+      - name: verify LuCI module loading
+        run: node tests/check-common.js
+
       - name: verify view syntax
         run: |
           set -eu
