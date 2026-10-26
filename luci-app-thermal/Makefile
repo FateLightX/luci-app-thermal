@@ -7,7 +7,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-thermal
-PKG_VERSION:=1.0.0
+PKG_VERSION:=2026.10.26
 PKG_RELEASE:=1
 
 LUCI_TITLE:=Temperature sensors for the LuCI status page

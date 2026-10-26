@@ -27,6 +27,13 @@ jobs:
       - name: verify translation catalogues
         run: ./tests/check-i18n.sh
 
+      - name: verify date version
+        run: |
+          set -eu
+          version=$(sed -n 's/^PKG_VERSION:=//p' luci-app-thermal/Makefile | head -n1)
+          echo "version: $version"
+          printf '%s\n' "$version" | grep -Eq '^[0-9]{4}[.][0-9]{2}[.][0-9]{2}$'
+
   build:
     needs: check
     name: ${{ matrix.arch }} build
